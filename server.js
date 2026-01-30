@@ -5,6 +5,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { readFileSync, statSync } from 'fs';
 import { homedir } from 'os';
 import { XMLParser } from 'fast-xml-parser';
+import { z } from 'zod';
 
 const STORE_PATH = `${homedir()}/Library/Group Containers/PZYM8XX95Q.com.automattic.SimplenoteMac/Data/Simplenote.storedata`;
 
@@ -72,19 +73,20 @@ function getAttr(obj, name) {
 		return null;
 	}
 	const attrs = Array.isArray(obj.attribute) ? obj.attribute : [obj.attribute];
-	const attr = attrs.find((a) => a['@_name'] === name);
+	const attr = attrs.find((a) => a?.['@_name'] === name);
 	return attr?.['#text'] ?? null;
 }
 
 /**
- * Safely parse JSON, returning default value on failure.
+ * Safely parse JSON array, returning default value on failure or non-array result.
  */
 function safeJsonParse(str, defaultValue = []) {
-	if (!str) {
+	if (!str || typeof str !== 'string') {
 		return defaultValue;
 	}
 	try {
-		return JSON.parse(str);
+		const parsed = JSON.parse(str);
+		return Array.isArray(parsed) ? parsed : defaultValue;
 	} catch {
 		return defaultValue;
 	}
@@ -110,7 +112,7 @@ function convertDate(coreDataTimestamp) {
  * Extract title from note content (first line, truncated).
  */
 function extractTitle(content) {
-	if (!content) {
+	if (!content || typeof content !== 'string') {
 		return '(empty)';
 	}
 	const firstLine = content.split('\n')[0]?.trim();
@@ -152,16 +154,10 @@ server.tool(
 	'list_notes',
 	'List recent notes, optionally filtered by tag',
 	{
-		tag: {
-			type: 'string',
-			description: 'Filter by tag name',
-		},
-		limit: {
-			type: 'number',
-			description: 'Max notes to return (default: 20)',
-		},
+		tag: z.string().optional().describe('Filter by tag name'),
+		limit: z.number().optional().default(20).describe('Max notes to return'),
 	},
-	async ({ tag, limit = 20 }) => {
+	async ({ tag, limit }) => {
 		try {
 			const { notes } = loadStore();
 
@@ -175,7 +171,8 @@ server.tool(
 					return noteTags.includes(tag);
 				})
 				.map((obj) => {
-					const content = getAttr(obj, 'content') || '';
+					const rawContent = getAttr(obj, 'content');
+					const content = typeof rawContent === 'string' ? rawContent : '';
 					return {
 						id: getAttr(obj, 'simperiumkey'),
 						title: extractTitle(content),
@@ -210,22 +207,11 @@ server.tool(
 	'search_notes',
 	'Search notes by content, title, or tags',
 	{
-		query: {
-			type: 'string',
-			description: 'Search term',
-			required: true,
-		},
-		limit: {
-			type: 'number',
-			description: 'Max results (default: 10)',
-		},
-		include_deleted: {
-			type: 'boolean',
-			description: 'Include deleted notes (default: false)',
-		},
+		query: z.string().describe('Search term'),
+		limit: z.number().optional().default(10).describe('Max results'),
+		include_deleted: z.boolean().optional().default(false).describe('Include deleted notes'),
 	},
-	async ({ query, limit = 10, include_deleted = false }) => {
-
+	async ({ query, limit, include_deleted }) => {
 		try {
 			const { notes } = loadStore();
 			const q = query.toLowerCase();
@@ -238,8 +224,9 @@ server.tool(
 					return true;
 				})
 				.filter((obj) => {
-					const content = (getAttr(obj, 'content') || '').toLowerCase();
-					const title = extractTitle(getAttr(obj, 'content')).toLowerCase();
+					const rawContent = getAttr(obj, 'content');
+					const content = typeof rawContent === 'string' ? rawContent.toLowerCase() : '';
+					const title = extractTitle(rawContent).toLowerCase();
 					const noteTags = safeJsonParse(getAttr(obj, 'tags'));
 					const tagsStr = noteTags.join(' ').toLowerCase();
 
@@ -248,7 +235,8 @@ server.tool(
 					);
 				})
 				.map((obj) => {
-					const content = getAttr(obj, 'content') || '';
+					const rawContent = getAttr(obj, 'content');
+					const content = typeof rawContent === 'string' ? rawContent : '';
 					const contentLower = content.toLowerCase();
 					const pos = contentLower.indexOf(q);
 
@@ -294,18 +282,10 @@ server.tool(
 	'get_note',
 	'Get full content of a specific note',
 	{
-		id: {
-			type: 'string',
-			description: 'Note ID (simperiumkey)',
-			required: true,
-		},
-		include_deleted: {
-			type: 'boolean',
-			description: 'Allow retrieving deleted notes (default: false)',
-		},
+		id: z.string().describe('Note ID (simperiumkey)'),
+		include_deleted: z.boolean().optional().default(false).describe('Allow retrieving deleted notes'),
 	},
-	async ({ id, include_deleted = false }) => {
-
+	async ({ id, include_deleted }) => {
 		try {
 			const { notes } = loadStore();
 			const note = notes.find((obj) => getAttr(obj, 'simperiumkey') === id);
