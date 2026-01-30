@@ -7,7 +7,18 @@ import { homedir } from 'os';
 import { XMLParser } from 'fast-xml-parser';
 import { z } from 'zod';
 
-const STORE_PATH = `${homedir()}/Library/Group Containers/PZYM8XX95Q.com.automattic.SimplenoteMac/Data/Simplenote.storedata`;
+// Parse CLI arguments for custom store path
+function getStorePath() {
+	const args = process.argv.slice(2);
+	const pathIndex = args.indexOf('--path');
+	if (pathIndex !== -1 && args[pathIndex + 1]) {
+		return args[pathIndex + 1];
+	}
+	// Default macOS Simplenote location
+	return `${homedir()}/Library/Group Containers/PZYM8XX95Q.com.automattic.SimplenoteMac/Data/Simplenote.storedata`;
+}
+
+const STORE_PATH = getStorePath();
 
 // Cache for parsed data
 let cache = {
