@@ -1,7 +1,7 @@
 {
   "name": "simplenote-mcp",
   "version": "1.0.0",
-  "description": "MCP server for reading SimpleNote data",
+  "description": "MCP server for reading Simplenote data from the local macOS store",
   "type": "module",
   "main": "server.js",
   "bin": {
@@ -14,10 +14,23 @@
   "keywords": [
     "mcp",
     "simplenote",
-    "notes"
+    "notes",
+    "claude",
+    "model-context-protocol"
   ],
-  "author": "",
-  "license": "ISC",
+  "author": "Mark Biek",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/markbiek/simplenote-mcp.git"
+  },
+  "homepage": "https://github.com/markbiek/simplenote-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/markbiek/simplenote-mcp/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.25.3",
     "fast-xml-parser": "^5.3.4",
