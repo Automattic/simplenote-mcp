@@ -2,23 +2,57 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { readFileSync, statSync } from 'fs';
+import { existsSync, readFileSync, statSync } from 'fs';
 import { homedir } from 'os';
 import { XMLParser } from 'fast-xml-parser';
 import { z } from 'zod';
 
+const DEFAULT_STORE_PATH = `${homedir()}/Library/Group Containers/PZYM8XX95Q.com.automattic.SimplenoteMac/Data/Simplenote.storedata`;
+
 // Parse CLI arguments for custom store path
 function getStorePath() {
 	const args = process.argv.slice(2);
-	const pathIndex = args.indexOf('--path');
-	if (pathIndex !== -1 && args[pathIndex + 1]) {
-		return args[pathIndex + 1];
+
+	// Support both --path value and --path=value syntax
+	for (let i = 0; i < args.length; i++) {
+		const arg = args[i];
+
+		if (arg.startsWith('--path=')) {
+			const value = arg.slice(7);
+			if (!value) {
+				console.error('Error: --path= requires a value');
+				process.exit(1);
+			}
+			return value;
+		}
+
+		if (arg === '--path') {
+			const value = args[i + 1];
+			if (!value || value.startsWith('--')) {
+				console.error('Error: --path requires a value');
+				process.exit(1);
+			}
+			return value;
+		}
 	}
-	// Default macOS Simplenote location
-	return `${homedir()}/Library/Group Containers/PZYM8XX95Q.com.automattic.SimplenoteMac/Data/Simplenote.storedata`;
+
+	return DEFAULT_STORE_PATH;
+}
+
+function validateStorePath(path) {
+	if (!existsSync(path)) {
+		console.error(`Error: Simplenote store not found at: ${path}`);
+		if (path === DEFAULT_STORE_PATH) {
+			console.error('Is Simplenote installed and has it synced at least once?');
+		} else {
+			console.error('Check that the --path argument points to a valid Simplenote.storedata file.');
+		}
+		process.exit(1);
+	}
 }
 
 const STORE_PATH = getStorePath();
+validateStorePath(STORE_PATH);
 
 // Cache for parsed data
 let cache = {
