@@ -98,7 +98,11 @@ function convertDate(coreDataTimestamp) {
 	if (!coreDataTimestamp) {
 		return null;
 	}
-	const unix = parseFloat(coreDataTimestamp) + 978307200;
+	const parsed = parseFloat(coreDataTimestamp);
+	if (Number.isNaN(parsed)) {
+		return null;
+	}
+	const unix = parsed + 978307200;
 	return new Date(unix * 1000).toISOString();
 }
 
@@ -208,7 +212,8 @@ server.tool(
 	{
 		query: {
 			type: 'string',
-			description: 'Search term (required)',
+			description: 'Search term',
+			required: true,
 		},
 		limit: {
 			type: 'number',
@@ -220,12 +225,6 @@ server.tool(
 		},
 	},
 	async ({ query, limit = 10, include_deleted = false }) => {
-		if (!query) {
-			return {
-				content: [{ type: 'text', text: 'Error: query parameter is required' }],
-				isError: true,
-			};
-		}
 
 		try {
 			const { notes } = loadStore();
@@ -297,7 +296,8 @@ server.tool(
 	{
 		id: {
 			type: 'string',
-			description: 'Note ID (simperiumkey) - required',
+			description: 'Note ID (simperiumkey)',
+			required: true,
 		},
 		include_deleted: {
 			type: 'boolean',
@@ -305,12 +305,6 @@ server.tool(
 		},
 	},
 	async ({ id, include_deleted = false }) => {
-		if (!id) {
-			return {
-				content: [{ type: 'text', text: 'Error: id parameter is required' }],
-				isError: true,
-			};
-		}
 
 		try {
 			const { notes } = loadStore();
