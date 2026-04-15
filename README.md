@@ -1,8 +1,8 @@
 # simplenote-mcp
 
-An MCP (Model Context Protocol) server that provides read access to your local Simplenote data on macOS. Use it with Claude Desktop or Claude Code to search and retrieve your notes.
+An MCP (Model Context Protocol) server that provides read access to your local Simplenote data on macOS. Use it with any MCP-compatible AI tool to search and retrieve your notes.
 
-## Requirements
+## Requirements (for now)
 
 - macOS
 - Node.js 22+
@@ -11,18 +11,18 @@ An MCP (Model Context Protocol) server that provides read access to your local S
 ## Installation
 
 ```bash
-npm install github:markbiek/simplenote-mcp
+npm install github:Automattic/simplenote-mcp
 ```
 
 Or clone and install locally:
 
 ```bash
-git clone https://github.com/markbiek/simplenote-mcp.git
+git clone https://github.com/Automattic/simplenote-mcp.git
 cd simplenote-mcp
 npm install
 ```
 
-## Configuration
+## Example Configuration
 
 ### Claude Desktop
 
@@ -133,8 +133,6 @@ Once configured, you can ask Claude things like:
 - "Search my notes for 'recipe'"
 - "Show notes tagged 'ideas'"
 - "Get the full content of note [id]"
-
-## How It Works
 
 This server reads directly from Simplenote's local Core Data XML store on macOS. It's read-only and doesn't modify your notes. The data is cached in memory and refreshed when the store file changes.
 
