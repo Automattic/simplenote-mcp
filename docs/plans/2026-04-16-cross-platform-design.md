@@ -53,7 +53,7 @@ The `--path` flag continues to force the native macOS provider.
 
 ## Normalized Data Model
 
-Both providers return the same shape, eliminating `getAttr()` calls from the tool handlers:
+Both providers return the same shape, eliminating `getAttr()` calls from the tool handlers. Each provider is responsible for converting its native format during normalization — the native macOS provider converts Core Data timestamps (seconds since 2001-01-01) to ISO strings, the Simperium API provider converts Unix timestamps:
 
 ```javascript
 {
@@ -87,7 +87,9 @@ The Electron app stores its access token in Chromium's Local Storage, persisted 
 | Windows  | `%APPDATA%/Simplenote/Local Storage/leveldb/` |
 | Linux    | `~/.config/Simplenote/Local Storage/leveldb/` |
 
-Use `classic-level` to open the database read-only. If locked (Simplenote is running), copy the LevelDB files to a temp directory and read the copy. A `--token` CLI flag serves as a manual fallback.
+Use `classic-level` to open the database read-only. If locked (Simplenote is running), copy the LevelDB files to a temp directory and read the copy. The temp copy must be cleaned up after reading (use a try/finally pattern). Note: copying while Simplenote is actively writing could produce a corrupted snapshot — if the copy fails to parse, retry once after a short delay.
+
+For manual token override, support a `SIMPLENOTE_TOKEN` environment variable (preferred over a CLI flag, since CLI args are visible in `ps` output and shell history).
 
 ### API Calls
 
@@ -97,12 +99,12 @@ Using Node 22's built-in `fetch`:
 - `GET https://api.simperium.com/1/{app_id}/tag/index?data=true` - all tags
 - Header: `X-Simperium-Token: {token}`
 
-The `app_id` is a public identifier shared across all Simplenote clients, embedded as a constant.
+The `app_id` is a public identifier shared across all Simplenote clients, embedded as a constant. It originates from the Simperium project configuration and is the same value used by the iOS, Android, macOS, and Electron apps. If it ever changes, we'd update the constant.
 
 ### Caching
 
 - **Native macOS provider:** File mtime-based cache (unchanged from current behavior).
-- **Simperium API provider:** Time-based cache with 60-second TTL. After expiry, next `loadStore()` call re-fetches from the API.
+- **Simperium API provider:** Time-based cache with 60-second TTL. After expiry, next `loadStore()` call re-fetches from the API. If the API request fails and cached data exists, return stale cache with a warning rather than failing outright. This prevents every tool call from hitting a down API repeatedly.
 
 ## File Organization
 
@@ -129,7 +131,7 @@ providers/
 
 ## CLI Changes
 
-- `--token <value>` - Manual token override, bypasses LevelDB extraction
+- `SIMPLENOTE_TOKEN` env var - Manual token override, bypasses LevelDB extraction
 - `--path <value>` - Unchanged, forces native macOS provider
 
 ## Decisions Made
