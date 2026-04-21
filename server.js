@@ -54,11 +54,13 @@ function resolveProvider({ forcedPath }) {
 		return createNativeProvider({ storePath: forcedPath });
 	}
 
-	if (platform() === 'darwin' && existsSync(DEFAULT_NATIVE_STORE_PATH)) {
+	const os = platform();
+
+	if (os === 'darwin' && existsSync(DEFAULT_NATIVE_STORE_PATH)) {
 		return createNativeProvider({ storePath: DEFAULT_NATIVE_STORE_PATH });
 	}
 
-	if (platform() === 'darwin') {
+	if (os === 'darwin') {
 		console.error(`Error: Simplenote store not found at: ${DEFAULT_NATIVE_STORE_PATH}`);
 		console.error('Is Simplenote installed and has it synced at least once?');
 		console.error('Remote authentication via `simplenote-mcp login` is not yet available.');
@@ -148,13 +150,13 @@ server.tool(
 			const result = notes
 				.filter((n) => (include_deleted ? true : !n.deleted))
 				.filter((n) => {
-					const content = (n.content || '').toLowerCase();
+					const content = n.content.toLowerCase();
 					const title = extractTitle(n.content).toLowerCase();
 					const tagsStr = n.tags.join(' ').toLowerCase();
 					return content.includes(q) || title.includes(q) || tagsStr.includes(q);
 				})
 				.map((n) => {
-					const content = n.content || '';
+					const content = n.content;
 					const contentLower = content.toLowerCase();
 					const pos = contentLower.indexOf(q);
 
