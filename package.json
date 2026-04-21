@@ -12,7 +12,7 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "prepare": "tsc",
-    "test": "node --import tsx --test 'tests/**/*.test.ts'"
+    "test": "node --import tsx --test \"tests/**/*.test.ts\""
   },
   "keywords": [
     "mcp",
