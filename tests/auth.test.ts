@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { mkdtemp, rm, stat, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, rm, stat, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir, platform } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -175,6 +175,19 @@ describe('token file roundtrip (tmpdir)', () => {
 			const mode = (await stat(tokenPath)).mode & 0o777;
 			assert.equal(mode, 0o600);
 		}
+	});
+
+	it('saveToken tightens perms to 0600 when file already exists with looser perms', async (t) => {
+		if (platform() === 'win32') {
+			t.skip('POSIX permission model');
+			return;
+		}
+		await writeFile(tokenPath, '{}');
+		await chmod(tokenPath, 0o644);
+		assert.equal((await stat(tokenPath)).mode & 0o777, 0o644);
+
+		await saveToken({ username: 'a@b.com', token: 'tok' }, tokenPath);
+		assert.equal((await stat(tokenPath)).mode & 0o777, 0o600);
 	});
 
 	it('loadToken reads what saveToken wrote', async () => {

@@ -1,4 +1,4 @@
-import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { getTokenPath } from './paths.js';
 
@@ -181,7 +181,22 @@ export async function saveToken(
 		null,
 		2,
 	);
-	await writeFile(tokenPath, payload, { mode: 0o600 });
+	// Write to a temp file, force mode 0600, then atomically rename.
+	// writeFile({mode}) only applies on create, so an existing file with
+	// looser perms would keep them — chmod guarantees 0600 every save.
+	const tmpPath = `${tokenPath}.tmp-${process.pid}`;
+	try {
+		await writeFile(tmpPath, payload, { mode: 0o600 });
+		await chmod(tmpPath, 0o600);
+		await rename(tmpPath, tokenPath);
+	} catch (err) {
+		try {
+			await unlink(tmpPath);
+		} catch {
+			// tmp file may not exist if writeFile itself failed
+		}
+		throw err;
+	}
 	return tokenPath;
 }
 
