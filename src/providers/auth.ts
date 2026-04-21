@@ -7,7 +7,6 @@ const SIMPLENOTE_AUTH_BASE = 'https://app.simplenote.com';
 // tokens appear to be scoped by request_source — using a custom value yields
 // a token that is rejected by the Simperium API.
 const REQUEST_SOURCE = 'macOS';
-const TOKEN_ENV_VAR = 'SIMPLENOTE_TOKEN';
 
 export type AuthToken = {
 	username: string | null;
@@ -129,7 +128,7 @@ export type LoadTokenOptions = {
 
 export async function loadToken(opts: LoadTokenOptions = {}): Promise<AuthToken | null> {
 	const env = opts.env ?? process.env;
-	const envToken = env[TOKEN_ENV_VAR]?.trim();
+	const envToken = env.SIMPLENOTE_TOKEN?.trim();
 	if (envToken) {
 		return { username: null, token: envToken };
 	}
