@@ -29,7 +29,8 @@ export type AuthErrorCode =
 	| 'request_failed'
 	| 'invalid_code'
 	| 'invalid_response'
-	| 'network_error';
+	| 'network_error'
+	| 'rate_limited';
 
 async function postJson(path: string, body: unknown): Promise<Response> {
 	const url = `${SIMPLENOTE_AUTH_BASE}${path}`;
@@ -53,6 +54,13 @@ export async function requestLoginCode(email: string): Promise<void> {
 		request_source: REQUEST_SOURCE,
 	});
 
+	if (res.status === 429) {
+		throw new AuthError(
+			'rate_limited',
+			'Too many login requests. Wait a few minutes and try again.',
+			429,
+		);
+	}
 	if (!res.ok) {
 		throw new AuthError(
 			'request_failed',
@@ -76,6 +84,13 @@ export async function completeLogin(
 			'invalid_code',
 			'Auth code rejected. Check the code from your email and try again.',
 			res.status,
+		);
+	}
+	if (res.status === 429) {
+		throw new AuthError(
+			'rate_limited',
+			'Too many login attempts. Wait a few minutes and try again.',
+			429,
 		);
 	}
 	if (!res.ok) {

@@ -89,6 +89,15 @@ describe('requestLoginCode', () => {
 			(err: unknown) => err instanceof AuthError && err.code === 'network_error',
 		);
 	});
+
+	it('throws AuthError(rate_limited) on 429', async () => {
+		mockFetch(async () => new Response('', { status: 429 }));
+		await assert.rejects(
+			() => requestLoginCode('a@b.com'),
+			(err: unknown) =>
+				err instanceof AuthError && err.code === 'rate_limited' && err.status === 429,
+		);
+	});
 });
 
 describe('completeLogin', () => {
@@ -127,6 +136,15 @@ describe('completeLogin', () => {
 		await assert.rejects(
 			() => completeLogin('a@b.com', 'CODE'),
 			(err: unknown) => err instanceof AuthError && err.code === 'invalid_response',
+		);
+	});
+
+	it('throws AuthError(rate_limited) on 429', async () => {
+		mockFetch(async () => new Response('', { status: 429 }));
+		await assert.rejects(
+			() => completeLogin('a@b.com', 'CODE'),
+			(err: unknown) =>
+				err instanceof AuthError && err.code === 'rate_limited' && err.status === 429,
 		);
 	});
 });
