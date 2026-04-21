@@ -1,17 +1,21 @@
 {
   "name": "simplenote-mcp",
   "version": "1.0.0",
-  "description": "MCP server for reading Simplenote data from the local macOS store",
+  "description": "MCP server for reading Simplenote notes across macOS, Linux, and Windows",
   "type": "module",
   "main": "dist/server.js",
   "bin": {
-    "simplenote-mcp": "./server.js"
+    "simplenote-mcp": "dist/server.js"
   },
+  "files": [
+    "dist"
+  ],
+  "mcpName": "io.github.automattic/simplenote-mcp",
   "scripts": {
-    "start": "node server.js",
-    "build": "tsc",
+    "start": "node dist/server.js",
+    "build": "tsc && shx chmod +x dist/server.js",
     "typecheck": "tsc --noEmit",
-    "prepare": "tsc",
+    "prepare": "npm run build",
     "test": "node --import tsx --test \"tests/**/*.test.ts\""
   },
   "keywords": [
@@ -25,11 +29,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/markbiek/simplenote-mcp.git"
+    "url": "git+https://github.com/Automattic/simplenote-mcp.git"
   },
-  "homepage": "https://github.com/markbiek/simplenote-mcp#readme",
+  "homepage": "https://github.com/Automattic/simplenote-mcp#readme",
   "bugs": {
-    "url": "https://github.com/markbiek/simplenote-mcp/issues"
+    "url": "https://github.com/Automattic/simplenote-mcp/issues"
   },
   "engines": {
     "node": ">=22.0.0"
@@ -41,6 +45,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "shx": "^0.4.0",
     "tsx": "^4.21.0",
     "typescript": "^5.7.0"
   }
