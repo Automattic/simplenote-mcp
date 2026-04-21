@@ -122,3 +122,5 @@ function convertCoreDataDate(value: string | null): string | null {
 	if (!Number.isFinite(parsed)) return null;
 	return new Date((parsed + CORE_DATA_EPOCH_OFFSET) * 1000).toISOString();
 }
+
+export const _test = { getAttr, normalizeNote, normalizeTag, convertCoreDataDate };

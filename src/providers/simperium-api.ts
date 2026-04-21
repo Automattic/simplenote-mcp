@@ -222,3 +222,5 @@ function toIsoFromUnix(value: unknown): string | null {
 	if (!Number.isFinite(num)) return null;
 	return new Date(num * 1000).toISOString();
 }
+
+export const _test = { normalizeNote, normalizeTag, toBool, toIsoFromUnix };

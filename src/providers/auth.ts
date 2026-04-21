@@ -122,13 +122,19 @@ function extractUsername(body: unknown): string | null {
 		: null;
 }
 
-export async function loadToken(): Promise<AuthToken | null> {
-	const envToken = process.env[TOKEN_ENV_VAR]?.trim();
+export type LoadTokenOptions = {
+	tokenPath?: string;
+	env?: NodeJS.ProcessEnv;
+};
+
+export async function loadToken(opts: LoadTokenOptions = {}): Promise<AuthToken | null> {
+	const env = opts.env ?? process.env;
+	const envToken = env[TOKEN_ENV_VAR]?.trim();
 	if (envToken) {
 		return { username: null, token: envToken };
 	}
 
-	const path = getTokenPath();
+	const path = opts.tokenPath ?? getTokenPath();
 	let raw: string;
 	try {
 		raw = await readFile(path, 'utf-8');
@@ -151,25 +157,30 @@ export async function loadToken(): Promise<AuthToken | null> {
 	return { username, token };
 }
 
-export async function saveToken(auth: AuthToken): Promise<string> {
-	const path = getTokenPath();
-	await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+export async function saveToken(
+	auth: AuthToken,
+	tokenPath: string = getTokenPath(),
+): Promise<string> {
+	await mkdir(dirname(tokenPath), { recursive: true, mode: 0o700 });
 	const payload = JSON.stringify(
 		{ username: auth.username, token: auth.token },
 		null,
 		2,
 	);
-	await writeFile(path, payload, { mode: 0o600 });
-	return path;
+	await writeFile(tokenPath, payload, { mode: 0o600 });
+	return tokenPath;
 }
 
-export async function deleteToken(): Promise<boolean> {
-	const path = getTokenPath();
+export async function deleteToken(
+	tokenPath: string = getTokenPath(),
+): Promise<boolean> {
 	try {
-		await unlink(path);
+		await unlink(tokenPath);
 		return true;
 	} catch (err) {
 		if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
 		throw err;
 	}
 }
+
+export const _test = { extractToken, extractUsername };

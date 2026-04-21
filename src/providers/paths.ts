@@ -4,22 +4,32 @@ import { join } from 'node:path';
 const APP_NAME = 'simplenote-mcp';
 const TOKEN_FILE = 'auth.json';
 
-export function getConfigDir(): string {
-	switch (platform()) {
+export type PathContext = {
+	platform: NodeJS.Platform;
+	homedir: string;
+	env: NodeJS.ProcessEnv;
+};
+
+export function defaultPathContext(): PathContext {
+	return { platform: platform(), homedir: homedir(), env: process.env };
+}
+
+export function getConfigDir(ctx: PathContext = defaultPathContext()): string {
+	switch (ctx.platform) {
 		case 'darwin':
-			return join(homedir(), 'Library', 'Application Support', APP_NAME);
+			return join(ctx.homedir, 'Library', 'Application Support', APP_NAME);
 		case 'win32': {
-			const appData = process.env.APPDATA ?? join(homedir(), 'AppData', 'Roaming');
+			const appData = ctx.env.APPDATA ?? join(ctx.homedir, 'AppData', 'Roaming');
 			return join(appData, APP_NAME);
 		}
 		default: {
-			const xdg = process.env.XDG_CONFIG_HOME?.trim();
-			const base = xdg && xdg.length > 0 ? xdg : join(homedir(), '.config');
+			const xdg = ctx.env.XDG_CONFIG_HOME?.trim();
+			const base = xdg && xdg.length > 0 ? xdg : join(ctx.homedir, '.config');
 			return join(base, APP_NAME);
 		}
 	}
 }
 
-export function getTokenPath(): string {
-	return join(getConfigDir(), TOKEN_FILE);
+export function getTokenPath(ctx?: PathContext): string {
+	return join(getConfigDir(ctx), TOKEN_FILE);
 }
