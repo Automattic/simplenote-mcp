@@ -23,29 +23,51 @@ try {
 
 const server = new McpServer({ name: 'simplenote', version: '1.0.0' });
 
-server.tool('list_tags', 'List all tags in SimpleNote', {}, async () => {
-	try {
-		const { tags } = await provider.loadStore();
-		const result = [...tags].sort((a, b) => a.index - b.index);
-		return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-	} catch (err) {
-		return toolError(err);
-	}
-});
+// All tools are read-only queries. The Simperium provider is network-bound,
+// so openWorldHint is true even though the native macOS provider is local.
+const READ_ONLY_ANNOTATIONS = {
+	readOnlyHint: true,
+	destructiveHint: false,
+	idempotentHint: true,
+	openWorldHint: true,
+} as const;
 
-server.tool(
-	'list_notes',
-	'List recent notes, optionally filtered by tag',
+server.registerTool(
+	'list_tags',
 	{
-		tag: z.string().optional().describe('Filter by tag name'),
-		limit: z
-			.number()
-			.int()
-			.min(0)
-			.max(100)
-			.optional()
-			.default(20)
-			.describe('Max notes to return (0–100)'),
+		title: 'List Tags',
+		description: 'List all tags in SimpleNote',
+		inputSchema: {},
+		annotations: READ_ONLY_ANNOTATIONS,
+	},
+	async () => {
+		try {
+			const { tags } = await provider.loadStore();
+			const result = [...tags].sort((a, b) => a.index - b.index);
+			return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+		} catch (err) {
+			return toolError(err);
+		}
+	},
+);
+
+server.registerTool(
+	'list_notes',
+	{
+		title: 'List Notes',
+		description: 'List recent notes, optionally filtered by tag',
+		inputSchema: {
+			tag: z.string().optional().describe('Filter by tag name'),
+			limit: z
+				.number()
+				.int()
+				.min(0)
+				.max(100)
+				.optional()
+				.default(20)
+				.describe('Max notes to return (0–100)'),
+		},
+		annotations: READ_ONLY_ANNOTATIONS,
 	},
 	async ({ tag, limit }) => {
 		try {
@@ -72,24 +94,28 @@ server.tool(
 	},
 );
 
-server.tool(
+server.registerTool(
 	'search_notes',
-	'Search notes by content, title, or tags',
 	{
-		query: z.string().min(1).describe('Search term'),
-		limit: z
-			.number()
-			.int()
-			.min(0)
-			.max(100)
-			.optional()
-			.default(10)
-			.describe('Max results (0–100)'),
-		include_deleted: z
-			.boolean()
-			.optional()
-			.default(false)
-			.describe('Include deleted notes'),
+		title: 'Search Notes',
+		description: 'Search notes by content, title, or tags',
+		inputSchema: {
+			query: z.string().min(1).describe('Search term'),
+			limit: z
+				.number()
+				.int()
+				.min(0)
+				.max(100)
+				.optional()
+				.default(10)
+				.describe('Max results (0–100)'),
+			include_deleted: z
+				.boolean()
+				.optional()
+				.default(false)
+				.describe('Include deleted notes'),
+		},
+		annotations: READ_ONLY_ANNOTATIONS,
 	},
 	async ({ query, limit, include_deleted }) => {
 		try {
@@ -143,16 +169,20 @@ server.tool(
 	},
 );
 
-server.tool(
+server.registerTool(
 	'get_note',
-	'Get full content of a specific note',
 	{
-		id: z.string().describe('Note ID (simperiumkey)'),
-		include_deleted: z
-			.boolean()
-			.optional()
-			.default(false)
-			.describe('Allow retrieving deleted notes'),
+		title: 'Get Note',
+		description: 'Get full content of a specific note',
+		inputSchema: {
+			id: z.string().describe('Note ID (simperiumkey)'),
+			include_deleted: z
+				.boolean()
+				.optional()
+				.default(false)
+				.describe('Allow retrieving deleted notes'),
+		},
+		annotations: READ_ONLY_ANNOTATIONS,
 	},
 	async ({ id, include_deleted }) => {
 		try {
