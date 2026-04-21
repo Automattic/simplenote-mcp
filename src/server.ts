@@ -38,7 +38,14 @@ server.tool(
 	'List recent notes, optionally filtered by tag',
 	{
 		tag: z.string().optional().describe('Filter by tag name'),
-		limit: z.number().optional().default(20).describe('Max notes to return'),
+		limit: z
+			.number()
+			.int()
+			.min(0)
+			.max(100)
+			.optional()
+			.default(20)
+			.describe('Max notes to return (0–100)'),
 	},
 	async ({ tag, limit }) => {
 		try {
@@ -69,8 +76,15 @@ server.tool(
 	'search_notes',
 	'Search notes by content, title, or tags',
 	{
-		query: z.string().describe('Search term'),
-		limit: z.number().optional().default(10).describe('Max results'),
+		query: z.string().min(1).describe('Search term'),
+		limit: z
+			.number()
+			.int()
+			.min(0)
+			.max(100)
+			.optional()
+			.default(10)
+			.describe('Max results (0–100)'),
 		include_deleted: z
 			.boolean()
 			.optional()
