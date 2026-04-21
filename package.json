@@ -3,13 +3,16 @@
   "version": "1.0.0",
   "description": "MCP server for reading Simplenote data from the local macOS store",
   "type": "module",
-  "main": "server.js",
+  "main": "dist/server.js",
   "bin": {
     "simplenote-mcp": "./server.js"
   },
   "scripts": {
     "start": "node server.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "prepare": "tsc",
+    "test": "node --import tsx --test \"tests/**/*.test.ts\""
   },
   "keywords": [
     "mcp",
@@ -35,5 +38,10 @@
     "@modelcontextprotocol/sdk": "^1.25.3",
     "fast-xml-parser": "^5.3.4",
     "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.0"
   }
 }
