@@ -13,6 +13,7 @@ const DEFAULT_APP_ID = 'history-analyst-dad';
 const APP_ID = process.env.SIMPLENOTE_APP_ID?.trim() || DEFAULT_APP_ID;
 const API_BASE = 'https://api.simperium.com/1';
 const CACHE_TTL_MS = 60_000;
+const FETCH_TIMEOUT_MS = 30_000;
 
 export type ApiErrorCode =
 	| 'no_token'
@@ -118,7 +119,10 @@ async function fetchAllIndex(
 
 		let res: Response;
 		try {
-			res = await fetch(url, { headers: { 'X-Simperium-Token': token } });
+			res = await fetch(url, {
+				headers: { 'X-Simperium-Token': token },
+				signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+			});
 		} catch (err) {
 			throw new ApiError(
 				'network_error',

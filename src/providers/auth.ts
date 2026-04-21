@@ -7,6 +7,7 @@ const SIMPLENOTE_AUTH_BASE = 'https://app.simplenote.com';
 // tokens appear to be scoped by request_source — using a custom value yields
 // a token that is rejected by the Simperium API.
 const REQUEST_SOURCE = 'macOS';
+const FETCH_TIMEOUT_MS = 15_000;
 
 export type AuthToken = {
 	username: string | null;
@@ -39,6 +40,7 @@ async function postJson(path: string, body: unknown): Promise<Response> {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(body),
+			signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
 		});
 	} catch (err) {
 		throw new AuthError(
