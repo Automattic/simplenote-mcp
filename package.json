@@ -12,7 +12,7 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "prepare": "tsc",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --import tsx --test 'tests/**/*.test.ts'"
   },
   "keywords": [
     "mcp",
@@ -41,6 +41,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "tsx": "^4.21.0",
     "typescript": "^5.7.0"
   }
 }
