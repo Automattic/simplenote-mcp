@@ -79,9 +79,15 @@ class SimperiumApiProvider implements Provider {
 			this.cache = { fetchedAt: Date.now(), data };
 			return data;
 		} catch (err) {
-			if (this.cache) {
+			// Only fall back to stale cache for transient failures. Auth
+			// rejection or shape errors must surface so the user notices.
+			if (
+				this.cache &&
+				err instanceof ApiError &&
+				(err.code === 'network_error' || err.code === 'request_failed')
+			) {
 				console.error(
-					`[simplenote-mcp] Simperium API error, returning cached data: ${(err as Error).message}`,
+					`[simplenote-mcp] Simperium API error, returning cached data: ${err.message}`,
 				);
 				return this.cache.data;
 			}
