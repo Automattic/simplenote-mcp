@@ -65,7 +65,7 @@ async function loginCommand(): Promise<number> {
 }
 
 function isAbortError(err: unknown): boolean {
-	return err instanceof Error && 'code' in err && err.code === 'ABORT_ERR';
+	return err instanceof Error && (err as NodeJS.ErrnoException).code === 'ABORT_ERR';
 }
 
 async function logoutCommand(): Promise<number> {
