@@ -31,11 +31,25 @@ export type NoteCreateResult = {
 	version: number;
 };
 
+export type NoteUpdateInput = {
+	id: string;
+	content?: string;
+	tags?: string[];
+	markdown?: boolean;
+	pinned?: boolean;
+};
+
+export type NoteUpdateResult = {
+	id: string;
+	version: number;
+};
+
 export type Provider = {
 	readonly name: 'native-macos' | 'simperium-api';
 	readonly description: string;
 	loadStore(): Promise<NormalizedStore>;
 	createNote?(input: NoteCreateInput): Promise<NoteCreateResult>;
+	updateNote?(input: NoteUpdateInput): Promise<NoteUpdateResult>;
 };
 
 export function extractTitle(content: string | null | undefined): string {

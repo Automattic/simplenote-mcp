@@ -6,6 +6,8 @@ import type {
 	NormalizedTag,
 	NoteCreateInput,
 	NoteCreateResult,
+	NoteUpdateInput,
+	NoteUpdateResult,
 	Provider,
 } from './normalize.js';
 
@@ -22,7 +24,8 @@ export type ApiErrorCode =
 	| 'unauthorized'
 	| 'request_failed'
 	| 'network_error'
-	| 'invalid_response';
+	| 'invalid_response'
+	| 'not_found';
 
 export class ApiError extends Error {
 	readonly code: ApiErrorCode;
@@ -140,6 +143,53 @@ class SimperiumApiProvider implements Provider {
 		this.clearCache();
 
 		return result;
+	}
+
+	async updateNote(input: NoteUpdateInput): Promise<NoteUpdateResult> {
+		const auth = await loadToken();
+		if (!auth) {
+			throw new ApiError(
+				'no_token',
+				'Not logged in. Run `simplenote-mcp login` to authenticate.',
+			);
+		}
+
+		// Fetch existing note to merge with
+		const { notes } = await this.loadStore();
+		const existingNote = notes.find((n) => n.id === input.id);
+		if (!existingNote) {
+			throw new ApiError('not_found', `Note not found: ${input.id}`, 404);
+		}
+
+		// Determine final values, preserving existing when not specified
+		const markdown = input.markdown ?? existingNote.markdown;
+		const pinned = input.pinned ?? existingNote.pinned;
+
+		const systemTags: string[] = [];
+		if (markdown) systemTags.push('markdown');
+		if (pinned) systemTags.push('pinned');
+
+		// Preserve creationDate, update modificationDate
+		const nowUnix = Math.floor(Date.now() / 1000);
+		const creationDate = toUnixFromIso(existingNote.created) ?? nowUnix;
+
+		const noteData = {
+			content: input.content ?? existingNote.content,
+			creationDate,
+			modificationDate: nowUnix,
+			deleted: existingNote.deleted,
+			publishURL: '',
+			shareURL: '',
+			systemTags,
+			tags: input.tags ?? existingNote.tags,
+		};
+
+		const result = await postNote(input.id, noteData, auth.token);
+
+		// Invalidate cache so subsequent reads see the updated note
+		this.clearCache();
+
+		return { id: input.id, version: result.version };
 	}
 }
 
@@ -332,4 +382,10 @@ function toIsoFromUnix(value: unknown): string | null {
 	return new Date(num * 1000).toISOString();
 }
 
-export const _test = { normalizeNote, normalizeTag, toBool, toIsoFromUnix };
+function toUnixFromIso(iso: string | null): number | null {
+	if (!iso) return null;
+	const ms = Date.parse(iso);
+	return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
+}
+
+export const _test = { normalizeNote, normalizeTag, toBool, toIsoFromUnix, toUnixFromIso };
