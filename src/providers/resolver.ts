@@ -55,10 +55,10 @@ export async function resolveProvider(
 		throw new Error(
 			'No Simplenote data source available.\n' +
 				`Either install/sync the Simplenote desktop app (default path: ${nativePath}),\n` +
-				'or run `simplenote-mcp login` to authenticate against the Simperium API.',
+				'or run `simplenote-mcp setup` to authenticate against the Simperium API.',
 		);
 	}
 	throw new Error(
-		'Not logged in. Run `simplenote-mcp login` to authenticate, or set SIMPLENOTE_TOKEN.',
+		'Not logged in. Run `simplenote-mcp setup` to authenticate, or set SIMPLENOTE_TOKEN.',
 	);
 }
