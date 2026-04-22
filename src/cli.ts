@@ -68,6 +68,8 @@ async function logoutCommand(): Promise<number> {
 	return 0;
 }
 
+export const _test = { reportAuthError };
+
 function reportAuthError(err: unknown, prefix: string): number {
 	if (err instanceof AuthError) {
 		console.error(`${prefix} ${err.message}`);
@@ -75,7 +77,8 @@ function reportAuthError(err: unknown, prefix: string): number {
 			console.error('Check your network connection and try again.');
 		}
 	} else {
-		console.error(`${prefix} ${(err as Error).message}`);
+		const message = err instanceof Error ? err.message : String(err);
+		console.error(`${prefix} ${message}`);
 	}
 	return 1;
 }
