@@ -33,6 +33,17 @@ const READ_ONLY_ANNOTATIONS = {
 	openWorldHint: true,
 } as const;
 
+// Write operations modify remote state.
+const WRITE_ANNOTATIONS = {
+	readOnlyHint: false,
+	destructiveHint: false,
+	idempotentHint: false,
+	openWorldHint: true,
+} as const;
+
+// Gate write operations behind an explicit opt-in.
+const ALLOW_WRITE = process.env.SIMPLENOTE_ALLOW_WRITE === '1';
+
 server.registerTool(
 	'list_tags',
 	{
@@ -212,6 +223,83 @@ server.registerTool(
 		}
 	},
 );
+
+// Register create_note only when write operations are enabled
+if (ALLOW_WRITE) {
+	server.registerTool(
+		'create_note',
+		{
+			title: 'Create Note',
+			description:
+				'Create a new note in Simplenote. Requires SIMPLENOTE_ALLOW_WRITE=1 and the Simperium API provider.',
+			inputSchema: {
+				content: z.string().describe('Note content (first line becomes title)'),
+				tags: z
+					.array(z.string())
+					.optional()
+					.describe('Tags to attach to the note'),
+				markdown: z
+					.boolean()
+					.optional()
+					.default(true)
+					.describe('Enable markdown rendering (default: true)'),
+				pinned: z
+					.boolean()
+					.optional()
+					.default(false)
+					.describe('Pin note to top of list'),
+			},
+			annotations: WRITE_ANNOTATIONS,
+		},
+		async ({ content, tags, markdown, pinned }) => {
+			// Only the API provider supports note creation
+			if (provider.name !== 'simperium-api') {
+				return {
+					content: [
+						{
+							type: 'text',
+							text: 'Error: create_note requires the Simperium API provider. ' +
+								'Run `simplenote-mcp login` to authenticate.',
+						},
+					],
+					isError: true,
+				};
+			}
+
+			if (!provider.createNote) {
+				return {
+					content: [
+						{ type: 'text', text: 'Error: Note creation not implemented for this provider.' },
+					],
+					isError: true,
+				};
+			}
+
+			try {
+				const result = await provider.createNote({ content, tags, markdown, pinned });
+				return {
+					content: [
+						{
+							type: 'text',
+							text: JSON.stringify(
+								{
+									success: true,
+									id: result.id,
+									version: result.version,
+									title: extractTitle(content),
+								},
+								null,
+								2,
+							),
+						},
+					],
+				};
+			} catch (err) {
+				return toolError(err);
+			}
+		},
+	);
+}
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
