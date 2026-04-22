@@ -32,7 +32,7 @@ For Linux / Windows, or macOS without the desktop app, see [Authentication](#aut
 - Node.js 22+
 - One of:
   - **macOS:** the [Simplenote desktop app](https://simplenote.com/) installed and synced, **or**
-  - Any platform: a Simplenote account (you'll run `simplenote-mcp login` once) + the Simperium production app ID (see [Authentication](#authentication))
+  - Any platform: a Simplenote account (you'll run `simplenote-mcp login` once)
 
 ## Install
 
@@ -70,24 +70,12 @@ To remove the stored token:
 npx simplenote-mcp logout
 ```
 
-### Simperium app ID
-
-The Simperium HTTP API requires the production Simplenote `app_id`. The default baked in (`history-analyst-dad`) is the public **testing** app shipped in the open-source [`simplenote-macos`](https://github.com/Automattic/simplenote-macos) sources and **will not work** with tokens issued by `app.simplenote.com`. Provide the production value via env var:
-
-```bash
-SIMPLENOTE_APP_ID=<production-app-id> npx simplenote-mcp
-```
-
-Or, inside the MCP client config, an `env` block on the server entry — see [Configuration](#configuration).
-
-The production ID is publicly visible on the wire from any official Simplenote client; it is not committed here so this repository remains safe to fork.
-
 ### Headless / CI
 
 Skip the file entirely by exporting the token directly:
 
 ```bash
-SIMPLENOTE_TOKEN=<token> SIMPLENOTE_APP_ID=<app-id> npx simplenote-mcp
+SIMPLENOTE_TOKEN=<token> npx simplenote-mcp
 ```
 
 The env var bypasses `auth.json`. Prefer it over a CLI flag — argv values appear in `ps` output and shell history.
@@ -104,8 +92,6 @@ All MCP clients converge on the same `{ command, args, env }` shape. The only th
 
 `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows).
 
-**Native macOS (no auth):**
-
 ```json
 {
   "mcpServers": {
@@ -117,23 +103,7 @@ All MCP clients converge on the same `{ command, args, env }` shape. The only th
 }
 ```
 
-**Simperium API (any platform):**
-
-```json
-{
-  "mcpServers": {
-    "simplenote": {
-      "command": "npx",
-      "args": ["-y", "simplenote-mcp"],
-      "env": {
-        "SIMPLENOTE_APP_ID": "<production-app-id>"
-      }
-    }
-  }
-}
-```
-
-Run `npx simplenote-mcp login` once in a terminal before starting the client.
+For the Simperium API path (Linux, Windows, or macOS without the desktop app), run `npx simplenote-mcp login` once in a terminal before starting the client.
 
 Restart Claude Desktop to pick up config changes. See [Windows notes](#windows-notes) below for Windows-specific quirks.
 
@@ -143,14 +113,6 @@ The easy path is the CLI:
 
 ```bash
 claude mcp add simplenote -- npx -y simplenote-mcp
-```
-
-For the Simperium API path, add the env var:
-
-```bash
-claude mcp add simplenote \
-  --env SIMPLENOTE_APP_ID=<production-app-id> \
-  -- npx -y simplenote-mcp
 ```
 
 Or edit `~/.claude.json` / project `.mcp.json` with the same JSON shape as Claude Desktop above.
@@ -314,8 +276,7 @@ A few Windows-specific quirks worth knowing:
 
   ```json
   "env": {
-    "APPDATA": "C:\\Users\\<you>\\AppData\\Roaming",
-    "SIMPLENOTE_APP_ID": "<production-app-id>"
+    "APPDATA": "C:\\Users\\<you>\\AppData\\Roaming"
   }
   ```
 
@@ -327,7 +288,7 @@ A few Windows-specific quirks worth knowing:
 You're on the Simperium API path without a token. Run `npx simplenote-mcp login` in a terminal.
 
 **"Token rejected."**
-Usually means the token is bound to a different `app_id` than the one the server is using. Check that `SIMPLENOTE_APP_ID` is set to the production value (see [Simperium app ID](#simperium-app-id)). If it is, the token may have been invalidated — re-run `login`.
+The token may have been invalidated server-side. Re-run `npx simplenote-mcp login`.
 
 **Tools list empty / "Simplenote store not found"**
 On macOS the default path is `~/Library/Group Containers/PZYM8XX95Q.com.automattic.SimplenoteMac/Data/Simplenote.storedata`. If your store lives elsewhere, pass `--path`. If you don't have the desktop app, switch to the API path with `simplenote-mcp login`.
