@@ -1,8 +1,11 @@
+import { randomUUID } from 'node:crypto';
 import { loadToken } from './auth.js';
 import type {
 	NormalizedNote,
 	NormalizedStore,
 	NormalizedTag,
+	NoteCreateInput,
+	NoteCreateResult,
 	Provider,
 } from './normalize.js';
 
@@ -98,6 +101,103 @@ class SimperiumApiProvider implements Provider {
 	clearCache(): void {
 		this.cache = null;
 	}
+
+	async createNote(input: NoteCreateInput): Promise<NoteCreateResult> {
+		const auth = await loadToken();
+		if (!auth) {
+			throw new ApiError(
+				'no_token',
+				'Not logged in. Run `simplenote-mcp login` to authenticate.',
+			);
+		}
+
+		const noteId = randomUUID();
+		const nowUnix = Math.floor(Date.now() / 1000);
+
+		const systemTags: string[] = [];
+		if (input.markdown !== false) {
+			// Default to markdown enabled unless explicitly set to false
+			systemTags.push('markdown');
+		}
+		if (input.pinned) {
+			systemTags.push('pinned');
+		}
+
+		const noteData = {
+			content: input.content,
+			creationDate: nowUnix,
+			modificationDate: nowUnix,
+			deleted: false,
+			publishURL: '',
+			shareURL: '',
+			systemTags,
+			tags: input.tags ?? [],
+		};
+
+		const result = await postNote(noteId, noteData, auth.token);
+
+		// Invalidate cache so subsequent reads see the new note
+		this.clearCache();
+
+		return result;
+	}
+}
+
+async function postNote(
+	noteId: string,
+	data: Record<string, unknown>,
+	token: string,
+): Promise<NoteCreateResult> {
+	// Simperium API: POST /1/{app_id}/{bucket}/i/{object_id}
+	// Returns the created version number
+	const url = `${API_BASE}/${APP_ID}/note/i/${noteId}`;
+
+	let res: Response;
+	try {
+		res = await fetch(url, {
+			method: 'POST',
+			headers: {
+				'X-Simperium-Token': token,
+				'Content-Type': 'application/json',
+			},
+			body: JSON.stringify(data),
+			signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+		});
+	} catch (err) {
+		throw new ApiError(
+			'network_error',
+			`Network error creating note: ${(err as Error).message}`,
+		);
+	}
+
+	if (res.status === 401) {
+		throw new ApiError(
+			'unauthorized',
+			'Token rejected. Run `simplenote-mcp login` to re-authenticate.',
+			401,
+		);
+	}
+	if (!res.ok) {
+		throw new ApiError(
+			'request_failed',
+			`Simperium API error creating note (HTTP ${res.status}).`,
+			res.status,
+		);
+	}
+
+	// Simperium returns the version number as plain text
+	let version = 1;
+	try {
+		const text = await res.text();
+		const parsed = Number.parseInt(text, 10);
+		if (Number.isFinite(parsed)) {
+			version = parsed;
+		}
+	} catch {
+		// Use default version 1 if parsing fails
+	}
+
+	return { id: noteId, version };
 }
 
 export function createApiProvider(): Provider {

@@ -19,10 +19,23 @@ export type NormalizedStore = {
 	tags: NormalizedTag[];
 };
 
+export type NoteCreateInput = {
+	content: string;
+	tags?: string[];
+	markdown?: boolean;
+	pinned?: boolean;
+};
+
+export type NoteCreateResult = {
+	id: string;
+	version: number;
+};
+
 export type Provider = {
 	readonly name: 'native-macos' | 'simperium-api';
 	readonly description: string;
 	loadStore(): Promise<NormalizedStore>;
+	createNote?(input: NoteCreateInput): Promise<NoteCreateResult>;
 };
 
 export function extractTitle(content: string | null | undefined): string {
