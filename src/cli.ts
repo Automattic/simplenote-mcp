@@ -53,9 +53,19 @@ async function loginCommand(): Promise<number> {
 		console.log(`\nLogged in as ${token.username ?? email}.`);
 		console.log(`Token saved to ${path}`);
 		return 0;
+	} catch (err) {
+		if (isAbortError(err)) {
+			console.log('\nAborted.');
+			return 1;
+		}
+		throw err;
 	} finally {
 		rl.close();
 	}
+}
+
+function isAbortError(err: unknown): boolean {
+	return err instanceof Error && (err as NodeJS.ErrnoException).code === 'ABORT_ERR';
 }
 
 async function logoutCommand(): Promise<number> {
