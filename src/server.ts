@@ -299,6 +299,105 @@ if (ALLOW_WRITE) {
 			}
 		},
 	);
+
+	server.registerTool(
+		'update_note',
+		{
+			title: 'Update Note',
+			description:
+				'Update an existing note in Simplenote. ' +
+				'TIP: Before updating content, call get_note first to see the current content so you can make informed changes. ' +
+				'Requires SIMPLENOTE_ALLOW_WRITE=1 and the Simperium API provider.',
+			inputSchema: {
+				id: z.string().describe('Note ID to update'),
+				content: z.string().optional().describe('New note content'),
+				tags: z
+					.array(z.string())
+					.optional()
+					.describe('Replace tags (provide full list)'),
+				markdown: z
+					.boolean()
+					.optional()
+					.describe('Enable/disable markdown rendering'),
+				pinned: z.boolean().optional().describe('Pin/unpin note'),
+			},
+			annotations: WRITE_ANNOTATIONS,
+		},
+		async ({ id, content, tags, markdown, pinned }) => {
+			// Validate at least one update field is provided
+			if (
+				content === undefined &&
+				tags === undefined &&
+				markdown === undefined &&
+				pinned === undefined
+			) {
+				return {
+					content: [
+						{
+							type: 'text',
+							text: 'Error: At least one field (content, tags, markdown, pinned) must be provided.',
+						},
+					],
+					isError: true,
+				};
+			}
+
+			// Only the API provider supports note updates
+			if (provider.name !== 'simperium-api') {
+				return {
+					content: [
+						{
+							type: 'text',
+							text:
+								'Error: update_note requires the Simperium API provider. ' +
+								'Run `simplenote-mcp login` to authenticate.',
+						},
+					],
+					isError: true,
+				};
+			}
+
+			if (!provider.updateNote) {
+				return {
+					content: [
+						{
+							type: 'text',
+							text: 'Error: Note update not implemented for this provider.',
+						},
+					],
+					isError: true,
+				};
+			}
+
+			try {
+				const result = await provider.updateNote({
+					id,
+					content,
+					tags,
+					markdown,
+					pinned,
+				});
+				return {
+					content: [
+						{
+							type: 'text',
+							text: JSON.stringify(
+								{
+									success: true,
+									id: result.id,
+									version: result.version,
+								},
+								null,
+								2,
+							),
+						},
+					],
+				};
+			} catch (err) {
+				return toolError(err);
+			}
+		},
+	);
 }
 
 const transport = new StdioServerTransport();
