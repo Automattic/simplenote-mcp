@@ -3,7 +3,7 @@ import { strict as assert } from 'node:assert';
 import { AuthError } from '../src/providers/auth.ts';
 import { _test } from '../src/cli.ts';
 
-const { reportAuthError } = _test;
+const { reportAuthError, parseWriteModeResponse } = _test;
 
 function captureStderr(run: () => void): string[] {
 	const calls: string[] = [];
@@ -64,5 +64,34 @@ describe('reportAuthError', () => {
 			assert.equal(code, 1);
 		});
 		assert.ok(calls.length > 0);
+	});
+});
+
+describe('parseWriteModeResponse', () => {
+	it('returns true for y/yes in any case', () => {
+		assert.equal(parseWriteModeResponse('y'), true);
+		assert.equal(parseWriteModeResponse('Y'), true);
+		assert.equal(parseWriteModeResponse('yes'), true);
+		assert.equal(parseWriteModeResponse('YES'), true);
+		assert.equal(parseWriteModeResponse('Yes'), true);
+		assert.equal(parseWriteModeResponse('  yes  '), true);
+	});
+
+	it('returns false for empty or whitespace-only input', () => {
+		assert.equal(parseWriteModeResponse(''), false);
+		assert.equal(parseWriteModeResponse('   '), false);
+		assert.equal(parseWriteModeResponse('\t'), false);
+		assert.equal(parseWriteModeResponse('\n'), false);
+	});
+
+	it('returns false for anything other than y/yes', () => {
+		assert.equal(parseWriteModeResponse('n'), false);
+		assert.equal(parseWriteModeResponse('no'), false);
+		assert.equal(parseWriteModeResponse('N'), false);
+		assert.equal(parseWriteModeResponse('NO'), false);
+		assert.equal(parseWriteModeResponse('maybe'), false);
+		assert.equal(parseWriteModeResponse('1'), false);
+		assert.equal(parseWriteModeResponse('yep'), false);
+		assert.equal(parseWriteModeResponse('yeah'), false);
 	});
 });

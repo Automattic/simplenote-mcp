@@ -78,7 +78,12 @@ async function logoutCommand(): Promise<number> {
 	return 0;
 }
 
-export const _test = { reportAuthError };
+export const _test = { reportAuthError, parseWriteModeResponse };
+
+function parseWriteModeResponse(input: string): boolean {
+	const normalized = input.trim().toLowerCase();
+	return normalized === 'y' || normalized === 'yes';
+}
 
 function reportAuthError(err: unknown, prefix: string): number {
 	if (err instanceof AuthError) {
