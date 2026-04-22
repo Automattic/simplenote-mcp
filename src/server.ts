@@ -400,6 +400,83 @@ if (ALLOW_WRITE) {
 	);
 }
 
+// Register prompts - these provide reusable prompt templates for AI clients
+server.registerPrompt(
+	'update-note-workflow',
+	{
+		title: 'Update Note Workflow',
+		description:
+			'Guided workflow to safely update a note by first reviewing its current content',
+		argsSchema: {
+			noteId: z.string().describe('The note ID to update'),
+		},
+	},
+	async ({ noteId }) => {
+		try {
+			const { notes } = await provider.loadStore();
+			const note = notes.find((n) => n.id === noteId);
+
+			if (!note) {
+				return {
+					messages: [
+						{
+							role: 'user' as const,
+							content: {
+								type: 'text' as const,
+								text: `Note with ID "${noteId}" was not found. Please check the ID and try again.`,
+							},
+						},
+					],
+				};
+			}
+
+			const tagsDisplay = note.tags.length > 0 ? note.tags.join(', ') : '(none)';
+			const flags = [
+				note.pinned ? 'pinned' : null,
+				note.markdown ? 'markdown' : null,
+			]
+				.filter(Boolean)
+				.join(', ') || '(none)';
+
+			return {
+				messages: [
+					{
+						role: 'user' as const,
+						content: {
+							type: 'text' as const,
+							text:
+								`I want to update this note. Here's the current content:\n\n` +
+								`**ID:** ${note.id}\n` +
+								`**Title:** ${extractTitle(note.content)}\n` +
+								`**Tags:** ${tagsDisplay}\n` +
+								`**Flags:** ${flags}\n` +
+								`**Modified:** ${note.modified ?? 'unknown'}\n\n` +
+								`---\n\n` +
+								`${note.content}\n\n` +
+								`---\n\n` +
+								`What changes would you like to make to this note?`,
+						},
+					},
+				],
+				description: `Update workflow for: ${extractTitle(note.content)}`,
+			};
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			return {
+				messages: [
+					{
+						role: 'user' as const,
+						content: {
+							type: 'text' as const,
+							text: `Error loading note: ${message}`,
+						},
+					},
+				],
+			};
+		}
+	},
+);
+
 const transport = new StdioServerTransport();
 await server.connect(transport);
 
