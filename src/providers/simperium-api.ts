@@ -6,10 +6,9 @@ import type {
 	Provider,
 } from './normalize.js';
 
-// Defaults to the public testing Simperium app shipped in simplenote-macos.
-// Tokens issued by app.simplenote.com are bound to the production Simperium
-// app, so real note access requires overriding this with SIMPLENOTE_APP_ID.
-const DEFAULT_APP_ID = 'history-analyst-dad';
+// Defaults to the production Simplenote app. Override with SIMPLENOTE_APP_ID
+// to target the testing app (history-analyst-dad) during development.
+const DEFAULT_APP_ID = 'chalk-bump-f49';
 const APP_ID = process.env.SIMPLENOTE_APP_ID?.trim() || DEFAULT_APP_ID;
 const API_BASE = 'https://api.simperium.com/1';
 const CACHE_TTL_MS = 60_000;
