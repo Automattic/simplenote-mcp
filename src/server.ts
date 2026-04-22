@@ -37,7 +37,7 @@ server.registerTool(
 	'list_tags',
 	{
 		title: 'List Tags',
-		description: 'List all tags in SimpleNote',
+		description: 'List all tags in Simplenote',
 		inputSchema: {},
 		annotations: READ_ONLY_ANNOTATIONS,
 	},
