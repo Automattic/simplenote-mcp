@@ -9,18 +9,18 @@ import {
 } from './providers/auth.js';
 import { getTokenPath } from './providers/paths.js';
 
-export type Subcommand = 'login' | 'logout';
+export type Subcommand = 'setup' | 'logout';
 
 export async function runSubcommand(name: Subcommand): Promise<number> {
 	switch (name) {
-		case 'login':
-			return loginCommand();
+		case 'setup':
+			return setupCommand();
 		case 'logout':
 			return logoutCommand();
 	}
 }
 
-async function loginCommand(): Promise<number> {
+async function setupCommand(): Promise<number> {
 	const rl = createInterface({ input: stdin, output: stdout });
 	try {
 		const email = (await rl.question('Simplenote email: ')).trim();
