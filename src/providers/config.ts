@@ -1,4 +1,5 @@
-import { readFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { getConfigPath } from './paths.js';
 
 export type Config = { writeMode: boolean };
@@ -46,4 +47,30 @@ export async function loadConfig(opts: LoadConfigOptions = {}): Promise<Config> 
 		);
 	}
 	return { writeMode: obj.writeMode };
+}
+
+export async function saveConfig(
+	config: Config,
+	opts: LoadConfigOptions = {},
+): Promise<string> {
+	const path = opts.configPath ?? getConfigPath();
+	await mkdir(dirname(path), { recursive: true });
+	const payload = `${JSON.stringify({ writeMode: config.writeMode }, null, 2)}\n`;
+	// Write to a temp file, force mode 0644, then atomically rename.
+	// writeFile({mode}) only applies on create, so an existing file with
+	// looser perms would keep them — chmod guarantees 0644 every save.
+	const tmpPath = `${path}.tmp-${process.pid}`;
+	try {
+		await writeFile(tmpPath, payload, { mode: 0o644 });
+		await chmod(tmpPath, 0o644);
+		await rename(tmpPath, path);
+	} catch (err) {
+		try {
+			await unlink(tmpPath);
+		} catch {
+			// tmp file may not exist if writeFile itself failed
+		}
+		throw err;
+	}
+	return path;
 }
