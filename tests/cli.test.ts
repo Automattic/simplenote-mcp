@@ -7,6 +7,7 @@ import { _test } from '../src/cli.ts';
 import {
 	captureConsole,
 	captureConsoleSync,
+	type FetchScriptEntry,
 	mockFetchQueue,
 	useEnvVar,
 	useTmpDir,
@@ -130,6 +131,12 @@ const NO_LOCAL = {
 	fileExists: () => false,
 };
 
+const LOCAL_AVAILABLE = {
+	platform: () => 'darwin' as NodeJS.Platform,
+	fileExists: () => true,
+	nativeStorePath: '/fake/native/store.storedata',
+};
+
 // A minimal readline Interface stand-in that replays scripted responses for
 // each prompt in order. Extra prompts throw so tests surface unexpected flow.
 function makePrompt(responses: string[]): () => Interface {
@@ -159,6 +166,42 @@ async function fileExists(path: string): Promise<boolean> {
 	}
 }
 
+// Runs setupCommand with the common boilerplate wrapped up: captures both
+// console streams, installs a fetch-queue mock if given, and returns the
+// exit code alongside everything the test might want to assert against.
+// authPath and configPath are always `tmp.path('auth.json')` and
+// `tmp.path('config.json')`; tests set up files at those paths before calling.
+type SetupProfile = Omit<
+	Parameters<typeof setupCommand>[0],
+	'authPath' | 'configPath' | 'createPrompt'
+>;
+
+async function runSetup(args: {
+	tmp: { path: (name: string) => string };
+	profile: SetupProfile;
+	responses: string[];
+	fetchScript?: FetchScriptEntry[];
+}): Promise<{ exitCode: number; stdout: string[]; stderr: string[] }> {
+	if (args.fetchScript) {
+		mockFetchQueue(args.fetchScript);
+	}
+	const out = captureConsole('log');
+	const err = captureConsole('error');
+	let exitCode: number;
+	try {
+		exitCode = await setupCommand({
+			...args.profile,
+			authPath: args.tmp.path('auth.json'),
+			configPath: args.tmp.path('config.json'),
+			createPrompt: makePrompt(args.responses),
+		});
+	} finally {
+		out.restore();
+		err.restore();
+	}
+	return { exitCode, stdout: out.lines, stderr: err.lines };
+}
+
 // ---------- setupCommand — already logged in ----------
 
 describe('setupCommand — already logged in', () => {
@@ -175,121 +218,49 @@ describe('setupCommand — already logged in', () => {
 	});
 
 	it('saves {source:api, writeMode:true} when user answers y', async () => {
-		const authPath = tmp.path('auth.json');
-		const configPath = tmp.path('config.json');
-		const { restore } = captureConsole('log');
-		try {
-			const exitCode = await setupCommand({
-				...NO_LOCAL,
-				authPath,
-				configPath,
-				createPrompt: makePrompt(['y']),
-			});
-			assert.equal(exitCode, 0);
-		} finally {
-			restore();
-		}
-		const config = JSON.parse(await readFile(configPath, 'utf-8'));
+		const { exitCode } = await runSetup({ tmp, profile: NO_LOCAL, responses: ['y'] });
+		assert.equal(exitCode, 0);
+		const config = JSON.parse(await readFile(tmp.path('config.json'), 'utf-8'));
 		assert.deepEqual(config, { source: 'api', writeMode: true });
 	});
 
 	it('saves {source:api, writeMode:false} when user answers n', async () => {
-		const authPath = tmp.path('auth.json');
-		const configPath = tmp.path('config.json');
-		const { restore } = captureConsole('log');
-		try {
-			const exitCode = await setupCommand({
-				...NO_LOCAL,
-				authPath,
-				configPath,
-				createPrompt: makePrompt(['n']),
-			});
-			assert.equal(exitCode, 0);
-		} finally {
-			restore();
-		}
-		const config = JSON.parse(await readFile(configPath, 'utf-8'));
+		const { exitCode } = await runSetup({ tmp, profile: NO_LOCAL, responses: ['n'] });
+		assert.equal(exitCode, 0);
+		const config = JSON.parse(await readFile(tmp.path('config.json'), 'utf-8'));
 		assert.deepEqual(config, { source: 'api', writeMode: false });
 	});
 
 	it('saves writeMode=false when user hits enter (default)', async () => {
-		const authPath = tmp.path('auth.json');
-		const configPath = tmp.path('config.json');
-		const { restore } = captureConsole('log');
-		try {
-			const exitCode = await setupCommand({
-				...NO_LOCAL,
-				authPath,
-				configPath,
-				createPrompt: makePrompt(['']),
-			});
-			assert.equal(exitCode, 0);
-		} finally {
-			restore();
-		}
-		const config = JSON.parse(await readFile(configPath, 'utf-8'));
+		const { exitCode } = await runSetup({ tmp, profile: NO_LOCAL, responses: [''] });
+		assert.equal(exitCode, 0);
+		const config = JSON.parse(await readFile(tmp.path('config.json'), 'utf-8'));
 		assert.deepEqual(config, { source: 'api', writeMode: false });
 	});
 
 	it('prints current logged-in email and writeMode OFF when config says false', async () => {
-		const authPath = tmp.path('auth.json');
-		const configPath = tmp.path('config.json');
 		await writeFile(
-			configPath,
+			tmp.path('config.json'),
 			JSON.stringify({ source: 'api', writeMode: false }),
 		);
-		const { lines, restore } = captureConsole('log');
-		try {
-			await setupCommand({
-				...NO_LOCAL,
-				authPath,
-				configPath,
-				createPrompt: makePrompt(['']),
-			});
-		} finally {
-			restore();
-		}
-		const joined = lines.join('\n');
+		const { stdout } = await runSetup({ tmp, profile: NO_LOCAL, responses: [''] });
+		const joined = stdout.join('\n');
 		assert.match(joined, /Logged in as mark@example\.com/);
 		assert.match(joined, /Write-mode is currently: OFF/);
 	});
 
 	it('says "not configured" when config is missing', async () => {
-		const authPath = tmp.path('auth.json');
-		const configPath = tmp.path('config.json');
-		const { lines, restore } = captureConsole('log');
-		try {
-			await setupCommand({
-				...NO_LOCAL,
-				authPath,
-				configPath,
-				createPrompt: makePrompt(['']),
-			});
-		} finally {
-			restore();
-		}
-		assert.match(lines.join('\n'), /Write-mode is currently: not configured/);
+		const { stdout } = await runSetup({ tmp, profile: NO_LOCAL, responses: [''] });
+		assert.match(stdout.join('\n'), /Write-mode is currently: not configured/);
 	});
 
 	it('shows "Previously using local" when prior config was source=local', async () => {
-		const authPath = tmp.path('auth.json');
-		const configPath = tmp.path('config.json');
 		await writeFile(
-			configPath,
+			tmp.path('config.json'),
 			JSON.stringify({ source: 'local', writeMode: false }),
 		);
-		const { lines, restore } = captureConsole('log');
-		try {
-			await setupCommand({
-				...NO_LOCAL,
-				authPath,
-				configPath,
-				createPrompt: makePrompt(['']),
-			});
-		} finally {
-			restore();
-		}
-		const joined = lines.join('\n');
+		const { stdout } = await runSetup({ tmp, profile: NO_LOCAL, responses: [''] });
+		const joined = stdout.join('\n');
 		assert.match(joined, /Logged in as mark@example\.com/);
 		assert.match(joined, /Previously using local Simplenote database/);
 		// No ON/OFF display in this branch — writeMode wasn't a prior choice.
@@ -297,59 +268,37 @@ describe('setupCommand — already logged in', () => {
 	});
 
 	it('recovers from a malformed config file (not JSON)', async () => {
-		const authPath = tmp.path('auth.json');
-		const configPath = tmp.path('config.json');
-		await writeFile(configPath, 'not json at all');
-		const err = captureConsole('error');
-		const out = captureConsole('log');
-		let exitCode: number;
-		try {
-			exitCode = await setupCommand({
-				...NO_LOCAL,
-				authPath,
-				configPath,
-				createPrompt: makePrompt(['y']),
-			});
-		} finally {
-			out.restore();
-			err.restore();
-		}
+		await writeFile(tmp.path('config.json'), 'not json at all');
+		const { exitCode, stderr } = await runSetup({
+			tmp,
+			profile: NO_LOCAL,
+			responses: ['y'],
+		});
 		assert.equal(exitCode, 0);
 		assert.ok(
-			err.lines.some((l) => /malformed/i.test(l)),
+			stderr.some((l) => /malformed/i.test(l)),
 			'expected stderr note about malformed config',
 		);
-		const config = JSON.parse(await readFile(configPath, 'utf-8'));
+		const config = JSON.parse(await readFile(tmp.path('config.json'), 'utf-8'));
 		assert.deepEqual(config, { source: 'api', writeMode: true });
 	});
 
 	it('recovers from a config file with wrong writeMode type', async () => {
-		const authPath = tmp.path('auth.json');
-		const configPath = tmp.path('config.json');
 		await writeFile(
-			configPath,
+			tmp.path('config.json'),
 			JSON.stringify({ source: 'api', writeMode: 'yes' }),
 		);
-		const err = captureConsole('error');
-		const out = captureConsole('log');
-		let exitCode: number;
-		try {
-			exitCode = await setupCommand({
-				...NO_LOCAL,
-				authPath,
-				configPath,
-				createPrompt: makePrompt(['n']),
-			});
-		} finally {
-			out.restore();
-			err.restore();
-		}
+		const { exitCode, stderr } = await runSetup({
+			tmp,
+			profile: NO_LOCAL,
+			responses: ['n'],
+		});
 		assert.equal(exitCode, 0);
 		assert.ok(
-			err.lines.some((l) => /malformed/i.test(l)),
+			stderr.some((l) => /malformed/i.test(l)),
 			'expected stderr note about malformed config',
 		);
-		const config = JSON.parse(await readFile(configPath, 'utf-8'));
+		const config = JSON.parse(await readFile(tmp.path('config.json'), 'utf-8'));
 		assert.deepEqual(config, { source: 'api', writeMode: false });
 	});
 });
@@ -364,88 +313,51 @@ describe('setupCommand — not logged in', () => {
 	});
 
 	it('runs the full login flow, saves token, then saves config', async () => {
-		const authPath = tmp.path('auth.json');
-		const configPath = tmp.path('config.json');
-		mockFetchQueue([
-			{ status: 200, body: {} },
-			{
-				status: 200,
-				body: { username: 'mark@example.com', sync_token: 'tok123' },
-			},
-		]);
-		const { restore } = captureConsole('log');
-		let exitCode: number;
-		try {
-			exitCode = await setupCommand({
-				...NO_LOCAL,
-				authPath,
-				configPath,
-				createPrompt: makePrompt(['mark@example.com', 'T7YLLP', 'y']),
-			});
-		} finally {
-			restore();
-		}
+		const { exitCode } = await runSetup({
+			tmp,
+			profile: NO_LOCAL,
+			responses: ['mark@example.com', 'T7YLLP', 'y'],
+			fetchScript: [
+				{ status: 200, body: {} },
+				{
+					status: 200,
+					body: { username: 'mark@example.com', sync_token: 'tok123' },
+				},
+			],
+		});
 		assert.equal(exitCode, 0);
-		assert.equal(await fileExists(authPath), true);
-		const auth = JSON.parse(await readFile(authPath, 'utf-8'));
+		assert.equal(await fileExists(tmp.path('auth.json')), true);
+		const auth = JSON.parse(await readFile(tmp.path('auth.json'), 'utf-8'));
 		assert.deepEqual(auth, { username: 'mark@example.com', token: 'tok123' });
-		const config = JSON.parse(await readFile(configPath, 'utf-8'));
+		const config = JSON.parse(await readFile(tmp.path('config.json'), 'utf-8'));
 		assert.deepEqual(config, { source: 'api', writeMode: true });
 	});
 
 	it('exits 1 on network failure and writes no config', async () => {
-		const authPath = tmp.path('auth.json');
-		const configPath = tmp.path('config.json');
-		mockFetchQueue([{ throws: new Error('network refused') }]);
-		const err = captureConsole('error');
-		const out = captureConsole('log');
-		let exitCode: number;
-		try {
-			exitCode = await setupCommand({
-				...NO_LOCAL,
-				authPath,
-				configPath,
-				createPrompt: makePrompt(['mark@example.com']),
-			});
-		} finally {
-			out.restore();
-			err.restore();
-		}
+		const { exitCode } = await runSetup({
+			tmp,
+			profile: NO_LOCAL,
+			responses: ['mark@example.com'],
+			fetchScript: [{ throws: new Error('network refused') }],
+		});
 		assert.equal(exitCode, 1);
-		assert.equal(await fileExists(configPath), false);
+		assert.equal(await fileExists(tmp.path('config.json')), false);
 	});
 
 	it('exits 1 on empty email; no token, no config written', async () => {
-		const authPath = tmp.path('auth.json');
-		const configPath = tmp.path('config.json');
-		const err = captureConsole('error');
-		const out = captureConsole('log');
-		let exitCode: number;
-		try {
-			exitCode = await setupCommand({
-				...NO_LOCAL,
-				authPath,
-				configPath,
-				createPrompt: makePrompt(['']),
-			});
-		} finally {
-			out.restore();
-			err.restore();
-		}
+		const { exitCode, stderr } = await runSetup({
+			tmp,
+			profile: NO_LOCAL,
+			responses: [''],
+		});
 		assert.equal(exitCode, 1);
-		assert.equal(await fileExists(authPath), false);
-		assert.equal(await fileExists(configPath), false);
-		assert.ok(err.lines.some((l) => /Email is required/.test(l)));
+		assert.equal(await fileExists(tmp.path('auth.json')), false);
+		assert.equal(await fileExists(tmp.path('config.json')), false);
+		assert.ok(stderr.some((l) => /Email is required/.test(l)));
 	});
 });
 
 // ---------- setupCommand — local DB detection ----------
-
-const LOCAL_AVAILABLE = {
-	platform: () => 'darwin' as NodeJS.Platform,
-	fileExists: () => true,
-	nativeStorePath: '/fake/native/store.storedata',
-};
 
 describe('setupCommand — local DB detected', () => {
 	const tmp = useTmpDir('smn-setup-local-');
@@ -455,97 +367,61 @@ describe('setupCommand — local DB detected', () => {
 	});
 
 	it('saves source=local when user accepts (Y), skipping writeMode and login', async () => {
-		const authPath = tmp.path('auth.json');
-		const configPath = tmp.path('config.json');
 		// No auth.json on disk. The local-DB choice should not require login.
-		const { restore } = captureConsole('log');
-		let exitCode: number;
-		try {
-			exitCode = await setupCommand({
-				...LOCAL_AVAILABLE,
-				authPath,
-				configPath,
-				createPrompt: makePrompt(['y']),
-			});
-		} finally {
-			restore();
-		}
+		const { exitCode } = await runSetup({
+			tmp,
+			profile: LOCAL_AVAILABLE,
+			responses: ['y'],
+		});
 		assert.equal(exitCode, 0);
-		const config = JSON.parse(await readFile(configPath, 'utf-8'));
+		const config = JSON.parse(await readFile(tmp.path('config.json'), 'utf-8'));
 		assert.deepEqual(config, { source: 'local', writeMode: false });
 		// No auth written — we never ran the login flow.
-		assert.equal(await fileExists(authPath), false);
+		assert.equal(await fileExists(tmp.path('auth.json')), false);
 	});
 
 	it('saves source=local when user hits enter (default is Y)', async () => {
-		const authPath = tmp.path('auth.json');
-		const configPath = tmp.path('config.json');
-		const { restore } = captureConsole('log');
-		let exitCode: number;
-		try {
-			exitCode = await setupCommand({
-				...LOCAL_AVAILABLE,
-				authPath,
-				configPath,
-				createPrompt: makePrompt(['']),
-			});
-		} finally {
-			restore();
-		}
+		const { exitCode } = await runSetup({
+			tmp,
+			profile: LOCAL_AVAILABLE,
+			responses: [''],
+		});
 		assert.equal(exitCode, 0);
-		const config = JSON.parse(await readFile(configPath, 'utf-8'));
+		const config = JSON.parse(await readFile(tmp.path('config.json'), 'utf-8'));
 		assert.deepEqual(config, { source: 'local', writeMode: false });
 	});
 
 	it('when user declines local (n), falls through to login + writeMode prompt', async () => {
-		const authPath = tmp.path('auth.json');
-		const configPath = tmp.path('config.json');
-		mockFetchQueue([
-			{ status: 200, body: {} },
-			{
-				status: 200,
-				body: { username: 'mark@example.com', sync_token: 'tok123' },
-			},
-		]);
-		const { restore } = captureConsole('log');
-		let exitCode: number;
-		try {
-			exitCode = await setupCommand({
-				...LOCAL_AVAILABLE,
-				authPath,
-				configPath,
-				// local prompt → n, then email, code, writeMode
-				createPrompt: makePrompt(['n', 'mark@example.com', 'T7YLLP', 'y']),
-			});
-		} finally {
-			restore();
-		}
+		const { exitCode } = await runSetup({
+			tmp,
+			profile: LOCAL_AVAILABLE,
+			// local prompt → n, then email, code, writeMode
+			responses: ['n', 'mark@example.com', 'T7YLLP', 'y'],
+			fetchScript: [
+				{ status: 200, body: {} },
+				{
+					status: 200,
+					body: { username: 'mark@example.com', sync_token: 'tok123' },
+				},
+			],
+		});
 		assert.equal(exitCode, 0);
-		const config = JSON.parse(await readFile(configPath, 'utf-8'));
+		const config = JSON.parse(await readFile(tmp.path('config.json'), 'utf-8'));
 		assert.deepEqual(config, { source: 'api', writeMode: true });
 	});
 
 	it('when user declines local (n) and is already logged in, skips login but still asks writeMode', async () => {
-		const authPath = tmp.path('auth.json');
-		const configPath = tmp.path('config.json');
 		await writeFile(
-			authPath,
+			tmp.path('auth.json'),
 			JSON.stringify({ username: 'mark@example.com', token: 'tok' }),
 		);
-		const { restore } = captureConsole('log');
-		let exitCode: number;
-		try {
-			exitCode = await setupCommand({
-				...LOCAL_AVAILABLE,
-				authPath,
-				configPath,
-				createPrompt: makePrompt(['n', 'y']),
-			});
-		} finally {
-			restore();
-		}
+		const { exitCode } = await runSetup({
+			tmp,
+			profile: LOCAL_AVAILABLE,
+			responses: ['n', 'y'],
+		});
 		assert.equal(exitCode, 0);
-		const config = JSON.parse(await readFile(configPath, 'utf-8'));
+		const config = JSON.parse(await readFile(tmp.path('config.json'), 'utf-8'));
 		assert.deepEqual(config, { source: 'api', writeMode: true });
 	});
 });
