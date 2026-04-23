@@ -1,29 +1,10 @@
-import { afterEach, beforeEach, describe, it, mock } from 'node:test';
+import { afterEach, describe, it, mock } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { ApiError, createApiProvider } from '../src/providers/simperium-api.ts';
+import { emptyIndexResponse, mockFetch, setupTestToken } from './helpers/simperium.ts';
 
-// Provide a token without hitting auth.json.
-let savedToken: string | undefined;
-
-beforeEach(() => {
-	savedToken = process.env.SIMPLENOTE_TOKEN;
-	process.env.SIMPLENOTE_TOKEN = 'test-token';
-});
-
-afterEach(() => {
-	mock.restoreAll();
-	mock.timers.reset();
-	if (savedToken === undefined) delete process.env.SIMPLENOTE_TOKEN;
-	else process.env.SIMPLENOTE_TOKEN = savedToken;
-});
-
-function mockFetch(impl: (url: string) => Promise<Response> | Response) {
-	mock.method(globalThis, 'fetch', impl as unknown as typeof globalThis.fetch);
-}
-
-function emptyIndexResponse() {
-	return Response.json({ index: [], mark: undefined });
-}
+setupTestToken();
+afterEach(() => mock.timers.reset());
 
 describe('loadStore stale-cache fallback', () => {
 	it('returns cached data on network_error after TTL expiry', async () => {

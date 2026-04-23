@@ -19,16 +19,62 @@ export type NormalizedStore = {
 	tags: NormalizedTag[];
 };
 
+export type NoteCreateInput = {
+	content: string;
+	tags?: string[];
+	markdown?: boolean;
+	pinned?: boolean;
+};
+
+export type NoteCreateResult = {
+	id: string;
+	version: number;
+};
+
+export type NoteUpdateInput = {
+	id: string;
+	content?: string;
+	tags?: string[];
+	markdown?: boolean;
+	pinned?: boolean;
+};
+
+export type NoteUpdateResult = {
+	id: string;
+	version: number;
+};
+
 export type Provider = {
 	readonly name: 'native-macos' | 'simperium-api';
 	readonly description: string;
 	loadStore(): Promise<NormalizedStore>;
+	createNote?(input: NoteCreateInput): Promise<NoteCreateResult>;
+	updateNote?(input: NoteUpdateInput): Promise<NoteUpdateResult>;
 };
 
 export function extractTitle(content: string | null | undefined): string {
 	if (typeof content !== 'string' || content.length === 0) return '(empty)';
 	const firstLine = content.split('\n')[0]?.trim() ?? '';
 	return firstLine.length > 0 ? firstLine.slice(0, 100) : '(empty)';
+}
+
+// Markdown-formatted view of a note, used by prompts that want the model to
+// reason about a note's current state before suggesting changes.
+export function formatNoteForDisplay(note: NormalizedNote): string {
+	const tagsDisplay = note.tags.length > 0 ? note.tags.join(', ') : '(none)';
+	const flags =
+		[note.pinned ? 'pinned' : null, note.markdown ? 'markdown' : null]
+			.filter(Boolean)
+			.join(', ') || '(none)';
+	return (
+		`**ID:** ${note.id}\n` +
+		`**Title:** ${extractTitle(note.content)}\n` +
+		`**Tags:** ${tagsDisplay}\n` +
+		`**Flags:** ${flags}\n` +
+		`**Modified:** ${note.modified ?? 'unknown'}\n\n` +
+		`---\n\n` +
+		`${note.content}`
+	);
 }
 
 export function safeJsonStringArray(value: unknown): string[] {

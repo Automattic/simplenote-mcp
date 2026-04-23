@@ -1,8 +1,13 @@
+import { randomUUID } from 'node:crypto';
 import { loadToken } from './auth.js';
 import type {
 	NormalizedNote,
 	NormalizedStore,
 	NormalizedTag,
+	NoteCreateInput,
+	NoteCreateResult,
+	NoteUpdateInput,
+	NoteUpdateResult,
 	Provider,
 } from './normalize.js';
 
@@ -19,7 +24,8 @@ export type ApiErrorCode =
 	| 'unauthorized'
 	| 'request_failed'
 	| 'network_error'
-	| 'invalid_response';
+	| 'invalid_response'
+	| 'not_found';
 
 export class ApiError extends Error {
 	readonly code: ApiErrorCode;
@@ -98,6 +104,194 @@ class SimperiumApiProvider implements Provider {
 	clearCache(): void {
 		this.cache = null;
 	}
+
+	async createNote(input: NoteCreateInput): Promise<NoteCreateResult> {
+		const auth = await loadToken();
+		if (!auth) {
+			throw new ApiError(
+				'no_token',
+				'Not logged in. Run `simplenote-mcp login` to authenticate.',
+			);
+		}
+
+		const noteId = randomUUID();
+		const nowUnix = Math.floor(Date.now() / 1000);
+
+		// Defaults: markdown on, pinned off. Caller can override either.
+		const systemTags = mergeSystemTags([], {
+			markdown: input.markdown ?? true,
+			pinned: input.pinned ?? false,
+		});
+
+		const noteData = {
+			content: input.content,
+			creationDate: nowUnix,
+			modificationDate: nowUnix,
+			deleted: false,
+			publishURL: '',
+			shareURL: '',
+			systemTags,
+			tags: input.tags ?? [],
+		};
+
+		const result = await postNote(noteId, noteData, auth.token);
+
+		// Invalidate cache so subsequent reads see the new note
+		this.clearCache();
+
+		return result;
+	}
+
+	async updateNote(input: NoteUpdateInput): Promise<NoteUpdateResult> {
+		const auth = await loadToken();
+		if (!auth) {
+			throw new ApiError(
+				'no_token',
+				'Not logged in. Run `simplenote-mcp login` to authenticate.',
+			);
+		}
+
+		// Fetch the raw remote record so we preserve fields we don't model in
+		// NormalizedNote (publishURL, shareURL, unknown systemTags, etc.) and
+		// avoid clobbering them on write. Always fresh — bypasses the 60s cache.
+		const existing = await fetchRawNote(input.id, auth.token);
+
+		const existingSystemTags = Array.isArray(existing.systemTags)
+			? existing.systemTags.filter((t): t is string => typeof t === 'string')
+			: [];
+		// undefined toggles preserve existing flags; explicit true/false sets them.
+		const systemTags = mergeSystemTags(existingSystemTags, {
+			markdown: input.markdown,
+			pinned: input.pinned,
+		});
+
+		const noteData: Record<string, unknown> = {
+			...existing,
+			systemTags,
+			modificationDate: Math.floor(Date.now() / 1000),
+		};
+		if (input.content !== undefined) noteData.content = input.content;
+		if (input.tags !== undefined) noteData.tags = input.tags;
+
+		const result = await postNote(input.id, noteData, auth.token, 'update');
+
+		// Invalidate cache so subsequent reads see the updated note
+		this.clearCache();
+
+		return { id: input.id, version: result.version };
+	}
+}
+
+// Centralizes auth header, timeout, and the universal status mappings shared
+// by every Simperium endpoint we touch. Callers only deal with the body and
+// any endpoint-specific status codes (e.g. 404 for single-note fetch).
+async function simperiumRequest(opts: {
+	method: 'GET' | 'POST';
+	path: string;
+	token: string;
+	body?: unknown;
+	context: string;
+	passthroughStatus?: readonly number[];
+}): Promise<Response> {
+	const headers: Record<string, string> = { 'X-Simperium-Token': opts.token };
+	let payload: string | undefined;
+	if (opts.body !== undefined) {
+		headers['Content-Type'] = 'application/json';
+		payload = JSON.stringify(opts.body);
+	}
+
+	let res: Response;
+	try {
+		res = await fetch(`${API_BASE}/${APP_ID}${opts.path}`, {
+			method: opts.method,
+			headers,
+			body: payload,
+			signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+		});
+	} catch (err) {
+		throw new ApiError(
+			'network_error',
+			`Network error ${opts.context}: ${(err as Error).message}`,
+		);
+	}
+
+	if (res.status === 401) {
+		throw new ApiError(
+			'unauthorized',
+			'Token rejected. Run `simplenote-mcp login` to re-authenticate.',
+			401,
+		);
+	}
+	if (!res.ok && !opts.passthroughStatus?.includes(res.status)) {
+		throw new ApiError(
+			'request_failed',
+			`Simperium API error ${opts.context} (HTTP ${res.status}).`,
+			res.status,
+		);
+	}
+	return res;
+}
+
+async function fetchRawNote(
+	noteId: string,
+	token: string,
+): Promise<Record<string, unknown>> {
+	// Encode the id so a value like `../tag/i/x` can't be normalized away by
+	// the URL parser and redirected to a different bucket.
+	const res = await simperiumRequest({
+		method: 'GET',
+		path: `/note/i/${encodeURIComponent(noteId)}`,
+		token,
+		context: 'fetching note',
+		passthroughStatus: [404],
+	});
+	if (res.status === 404) {
+		throw new ApiError('not_found', `Note not found: ${noteId}`, 404);
+	}
+
+	let body: unknown;
+	try {
+		body = await res.json();
+	} catch {
+		throw new ApiError('invalid_response', 'Simperium note returned invalid JSON.');
+	}
+	if (!body || typeof body !== 'object') {
+		throw new ApiError(
+			'invalid_response',
+			'Simperium note response was not a JSON object.',
+		);
+	}
+	return body as Record<string, unknown>;
+}
+
+async function postNote(
+	noteId: string,
+	data: Record<string, unknown>,
+	token: string,
+	operation: 'create' | 'update' = 'create',
+): Promise<NoteCreateResult> {
+	// Simperium returns the new version number as plain text in the body.
+	// Encode the id so a value like `../tag/i/x` can't be normalized away by
+	// the URL parser and redirected to a different bucket. ccid is a per-call
+	// idempotency token: a retry after a network blip won't duplicate the note.
+	const ccid = randomUUID();
+	const res = await simperiumRequest({
+		method: 'POST',
+		path: `/note/i/${encodeURIComponent(noteId)}?ccid=${ccid}`,
+		token,
+		body: data,
+		context: operation === 'update' ? 'updating note' : 'creating note',
+	});
+
+	let version = 1;
+	try {
+		const text = await res.text();
+		const parsed = Number.parseInt(text, 10);
+		if (Number.isFinite(parsed)) version = parsed;
+	} catch {
+		// fall through with default version 1
+	}
+	return { id: noteId, version };
 }
 
 export function createApiProvider(): Provider {
@@ -114,35 +308,13 @@ async function fetchAllIndex(
 	while (true) {
 		const params = new URLSearchParams({ data: 'true' });
 		if (mark) params.set('mark', mark);
-		const url = `${API_BASE}/${APP_ID}/${bucket}/index?${params}`;
 
-		let res: Response;
-		try {
-			res = await fetch(url, {
-				headers: { 'X-Simperium-Token': token },
-				signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-			});
-		} catch (err) {
-			throw new ApiError(
-				'network_error',
-				`Network error contacting Simperium: ${(err as Error).message}`,
-			);
-		}
-
-		if (res.status === 401) {
-			throw new ApiError(
-				'unauthorized',
-				'Token rejected. Run `simplenote-mcp login` to re-authenticate.',
-				401,
-			);
-		}
-		if (!res.ok) {
-			throw new ApiError(
-				'request_failed',
-				`Simperium API error fetching ${bucket} index (HTTP ${res.status}).`,
-				res.status,
-			);
-		}
+		const res = await simperiumRequest({
+			method: 'GET',
+			path: `/${bucket}/index?${params}`,
+			token,
+			context: `fetching ${bucket} index`,
+		});
 
 		let body: unknown;
 		try {
@@ -218,6 +390,19 @@ function normalizeTag(entry: IndexEntry): NormalizedTag | null {
 	return { name, index };
 }
 
+function mergeSystemTags(
+	existing: readonly string[],
+	toggles: { markdown?: boolean; pinned?: boolean },
+): string[] {
+	const tags = new Set(existing);
+	for (const [name, value] of Object.entries(toggles)) {
+		if (value === undefined) continue;
+		if (value) tags.add(name);
+		else tags.delete(name);
+	}
+	return Array.from(tags);
+}
+
 function toBool(value: unknown): boolean {
 	if (typeof value === 'boolean') return value;
 	if (typeof value === 'number') return value !== 0;
@@ -232,4 +417,11 @@ function toIsoFromUnix(value: unknown): string | null {
 	return new Date(num * 1000).toISOString();
 }
 
-export const _test = { normalizeNote, normalizeTag, toBool, toIsoFromUnix };
+export const _test = {
+	normalizeNote,
+	normalizeTag,
+	toBool,
+	toIsoFromUnix,
+	mergeSystemTags,
+	simperiumRequest,
+};

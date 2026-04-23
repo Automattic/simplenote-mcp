@@ -1,8 +1,10 @@
-import { describe, it } from 'node:test';
+import { afterEach, describe, it, mock } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { _test } from '../src/providers/simperium-api.ts';
+import { ApiError, _test } from '../src/providers/simperium-api.ts';
+import { mockFetch } from './helpers/simperium.ts';
 
-const { normalizeNote, normalizeTag, toBool, toIsoFromUnix } = _test;
+const { normalizeNote, normalizeTag, toBool, toIsoFromUnix, mergeSystemTags, simperiumRequest } =
+	_test;
 
 describe('toBool', () => {
 	it('handles boolean inputs', () => {
@@ -127,5 +129,201 @@ describe('normalizeTag', () => {
 			name: 'a',
 			index: 0,
 		});
+	});
+});
+
+describe('mergeSystemTags', () => {
+	it('returns empty when no existing tags and no toggles', () => {
+		assert.deepEqual(mergeSystemTags([], {}), []);
+	});
+
+	it('adds toggled-on tags starting from empty', () => {
+		assert.deepEqual(mergeSystemTags([], { markdown: true }), ['markdown']);
+		assert.deepEqual(mergeSystemTags([], { pinned: true }), ['pinned']);
+		assert.deepEqual(
+			mergeSystemTags([], { markdown: true, pinned: true }).sort(),
+			['markdown', 'pinned'],
+		);
+	});
+
+	it('preserves existing tags when toggles are undefined', () => {
+		assert.deepEqual(mergeSystemTags(['unread', 'markdown'], {}), ['unread', 'markdown']);
+		assert.deepEqual(
+			mergeSystemTags(['unread'], { markdown: undefined, pinned: undefined }),
+			['unread'],
+		);
+	});
+
+	it('removes a tag when toggle is false, leaves unrelated tags alone', () => {
+		assert.deepEqual(
+			mergeSystemTags(['markdown', 'pinned', 'unread'], { markdown: false }).sort(),
+			['pinned', 'unread'],
+		);
+	});
+
+	it('adds a tag when toggle is true, leaves unrelated tags alone', () => {
+		assert.deepEqual(
+			mergeSystemTags(['unread'], { pinned: true }).sort(),
+			['pinned', 'unread'],
+		);
+	});
+
+	it('is idempotent when toggle matches existing state', () => {
+		assert.deepEqual(mergeSystemTags(['markdown'], { markdown: true }), ['markdown']);
+		assert.deepEqual(mergeSystemTags(['unread'], { markdown: false }), ['unread']);
+	});
+});
+
+describe('simperiumRequest', () => {
+	afterEach(() => mock.restoreAll());
+
+	it('builds URL from API_BASE + APP_ID + path', async () => {
+		let capturedUrl: string | undefined;
+		mockFetch(async (url) => {
+			capturedUrl = url;
+			return new Response('', { status: 200 });
+		});
+
+		await simperiumRequest({
+			method: 'GET',
+			path: '/note/i/abc',
+			token: 't',
+			context: 'fetching note',
+		});
+
+		assert.match(capturedUrl!, /^https:\/\/api\.simperium\.com\/1\/[^/]+\/note\/i\/abc$/);
+	});
+
+	it('attaches X-Simperium-Token header', async () => {
+		let capturedHeaders: Record<string, string> | undefined;
+		mockFetch(async (_url, opts) => {
+			capturedHeaders = Object.fromEntries(
+				Object.entries(opts?.headers ?? {}).map(([k, v]) => [k, String(v)]),
+			);
+			return new Response('', { status: 200 });
+		});
+
+		await simperiumRequest({ method: 'GET', path: '/x', token: 'my-token', context: 'x' });
+		assert.equal(capturedHeaders!['X-Simperium-Token'], 'my-token');
+	});
+
+	it('omits Content-Type and body when no body is given', async () => {
+		let capturedHeaders: Record<string, string> | undefined;
+		let capturedBody: unknown;
+		mockFetch(async (_url, opts) => {
+			capturedHeaders = Object.fromEntries(
+				Object.entries(opts?.headers ?? {}).map(([k, v]) => [k, String(v)]),
+			);
+			capturedBody = opts?.body;
+			return new Response('', { status: 200 });
+		});
+
+		await simperiumRequest({ method: 'GET', path: '/x', token: 't', context: 'x' });
+		assert.equal(capturedHeaders!['Content-Type'], undefined);
+		assert.equal(capturedBody, undefined);
+	});
+
+	it('sets Content-Type and JSON-encodes body when body is given', async () => {
+		let capturedHeaders: Record<string, string> | undefined;
+		let capturedBody: string | undefined;
+		mockFetch(async (_url, opts) => {
+			capturedHeaders = Object.fromEntries(
+				Object.entries(opts?.headers ?? {}).map(([k, v]) => [k, String(v)]),
+			);
+			capturedBody = opts?.body as string | undefined;
+			return new Response('', { status: 200 });
+		});
+
+		await simperiumRequest({
+			method: 'POST',
+			path: '/x',
+			token: 't',
+			body: { foo: 1 },
+			context: 'x',
+		});
+		assert.equal(capturedHeaders!['Content-Type'], 'application/json');
+		assert.deepEqual(JSON.parse(capturedBody!), { foo: 1 });
+	});
+
+	it('throws network_error with context when fetch throws', async () => {
+		mockFetch(async () => {
+			throw new Error('boom');
+		});
+
+		await assert.rejects(
+			() =>
+				simperiumRequest({
+					method: 'GET',
+					path: '/x',
+					token: 't',
+					context: 'fetching widget',
+				}),
+			(err: unknown) =>
+				err instanceof ApiError &&
+				err.code === 'network_error' &&
+				err.message.includes('fetching widget') &&
+				err.message.includes('boom'),
+		);
+	});
+
+	it('throws unauthorized on 401', async () => {
+		mockFetch(async () => new Response('', { status: 401 }));
+
+		await assert.rejects(
+			() => simperiumRequest({ method: 'GET', path: '/x', token: 't', context: 'x' }),
+			(err: unknown) =>
+				err instanceof ApiError && err.code === 'unauthorized' && err.status === 401,
+		);
+	});
+
+	it('throws request_failed on non-2xx by default, including context and status', async () => {
+		mockFetch(async () => new Response('', { status: 503 }));
+
+		await assert.rejects(
+			() =>
+				simperiumRequest({
+					method: 'GET',
+					path: '/x',
+					token: 't',
+					context: 'doing X',
+				}),
+			(err: unknown) =>
+				err instanceof ApiError &&
+				err.code === 'request_failed' &&
+				err.status === 503 &&
+				err.message.includes('doing X') &&
+				err.message.includes('503'),
+		);
+	});
+
+	it('returns the Response for a status listed in passthroughStatus', async () => {
+		mockFetch(async () => new Response('', { status: 404 }));
+
+		const res = await simperiumRequest({
+			method: 'GET',
+			path: '/x',
+			token: 't',
+			context: 'x',
+			passthroughStatus: [404],
+		});
+		assert.equal(res.status, 404);
+	});
+
+	it('still throws unauthorized for 401 even when 401 is in passthroughStatus', async () => {
+		// 401 is special-cased before the passthrough check — auth failures must
+		// always surface, even if a caller tried to handle them.
+		mockFetch(async () => new Response('', { status: 401 }));
+
+		await assert.rejects(
+			() =>
+				simperiumRequest({
+					method: 'GET',
+					path: '/x',
+					token: 't',
+					context: 'x',
+					passthroughStatus: [401],
+				}),
+			(err: unknown) => err instanceof ApiError && err.code === 'unauthorized',
+		);
 	});
 });
