@@ -45,9 +45,6 @@ const WRITE_ANNOTATIONS = {
 	openWorldHint: true,
 } as const;
 
-// Gate write operations behind an explicit opt-in.
-const ALLOW_WRITE = process.env.SIMPLENOTE_ALLOW_WRITE === '1';
-
 server.registerTool(
 	'list_tags',
 	{
@@ -228,24 +225,17 @@ server.registerTool(
 	},
 );
 
-// Register write tools only when write is opted in AND the resolved provider
-// advertises the capability. The native macOS provider does not currently
-// implement create/update, so on macOS with the desktop app installed these
-// tools will not be advertised even if SIMPLENOTE_ALLOW_WRITE=1.
-if (ALLOW_WRITE && !provider.createNote && !provider.updateNote) {
-	console.error(
-		`[simplenote-mcp] SIMPLENOTE_ALLOW_WRITE=1 set, but the active provider (${provider.name}) does not support write operations. Write tools will not be registered.`,
-	);
-}
-
-if (ALLOW_WRITE && provider.createNote) {
+// Register write tools only when the resolved provider advertises the
+// capability. The resolver strips createNote / updateNote when write-mode is
+// disabled in config, and the native provider doesn't implement them at all.
+if (provider.createNote) {
 	const createNote = provider.createNote.bind(provider);
 	server.registerTool(
 		'create_note',
 		{
 			title: 'Create Note',
 			description:
-				'Create a new note in Simplenote. Requires SIMPLENOTE_ALLOW_WRITE=1 and a provider that supports writes (Simperium API).',
+				'Create a new note in Simplenote. Requires write-mode enabled in `simplenote-mcp setup` and a provider that supports writes (Simperium API).',
 			inputSchema: {
 				content: z.string().describe('Note content (first line becomes title)'),
 				tags: z
@@ -290,7 +280,7 @@ if (ALLOW_WRITE && provider.createNote) {
 	);
 }
 
-if (ALLOW_WRITE && provider.updateNote) {
+if (provider.updateNote) {
 	const updateNote = provider.updateNote.bind(provider);
 	server.registerTool(
 		'update_note',
@@ -300,7 +290,7 @@ if (ALLOW_WRITE && provider.updateNote) {
 				'Update an existing note in Simplenote. ' +
 				'IMPORTANT: When changing only part of the content (e.g. fixing a typo, adding a section), call get_note first — `content` replaces the entire note, so a partial value will erase the rest. ' +
 				'Tags, when provided, also replace the existing list in full. ' +
-				'Requires SIMPLENOTE_ALLOW_WRITE=1 and a provider that supports writes (Simperium API).',
+				'Requires write-mode enabled in `simplenote-mcp setup` and a provider that supports writes (Simperium API).',
 			inputSchema: {
 				id: z.string().describe('Note ID to update'),
 				content: z.string().optional().describe('New note content'),

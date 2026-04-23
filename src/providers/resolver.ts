@@ -99,5 +99,16 @@ export async function resolveProvider(
 			'No auth token found. Run `simplenote-mcp setup` to authenticate.',
 		);
 	}
-	return makeApi();
+	// writeMode === false: return a read-only view of the API provider so the
+	// server's capability check (provider.createNote / provider.updateNote)
+	// won't register write tools.
+	return readOnly(makeApi());
+}
+
+function readOnly(provider: Provider): Provider {
+	return {
+		name: provider.name,
+		description: `${provider.description} (read-only)`,
+		loadStore: () => provider.loadStore(),
+	};
 }
