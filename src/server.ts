@@ -255,13 +255,11 @@ if (ALLOW_WRITE && provider.createNote) {
 				markdown: z
 					.boolean()
 					.optional()
-					.default(true)
 					.describe('Enable markdown rendering (default: true)'),
 				pinned: z
 					.boolean()
 					.optional()
-					.default(false)
-					.describe('Pin note to top of list'),
+					.describe('Pin note to top of list (default: false)'),
 			},
 			annotations: WRITE_ANNOTATIONS,
 		},
@@ -300,7 +298,8 @@ if (ALLOW_WRITE && provider.updateNote) {
 			title: 'Update Note',
 			description:
 				'Update an existing note in Simplenote. ' +
-				'TIP: Before updating content, call get_note first to see the current content so you can make informed changes. ' +
+				'IMPORTANT: When changing only part of the content (e.g. fixing a typo, adding a section), call get_note first — `content` replaces the entire note, so a partial value will erase the rest. ' +
+				'Tags, when provided, also replace the existing list in full. ' +
 				'Requires SIMPLENOTE_ALLOW_WRITE=1 and a provider that supports writes (Simperium API).',
 			inputSchema: {
 				id: z.string().describe('Note ID to update'),
