@@ -1,4 +1,4 @@
-import { afterEach, describe, it, mock } from 'node:test';
+import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { readFile, stat, writeFile } from 'node:fs/promises';
 import type { Interface } from 'node:readline/promises';
@@ -167,14 +167,16 @@ describe('setupCommand — already logged in', () => {
 	afterEach(() => {
 		mock.restoreAll();
 	});
+	beforeEach(async () => {
+		await writeFile(
+			tmp.path('auth.json'),
+			JSON.stringify({ username: 'mark@example.com', token: 'tok' }),
+		);
+	});
 
 	it('saves {source:api, writeMode:true} when user answers y', async () => {
 		const authPath = tmp.path('auth.json');
 		const configPath = tmp.path('config.json');
-		await writeFile(
-			authPath,
-			JSON.stringify({ username: 'mark@example.com', token: 'tok' }),
-		);
 		const { restore } = captureConsole('log');
 		try {
 			const exitCode = await setupCommand({
@@ -194,10 +196,6 @@ describe('setupCommand — already logged in', () => {
 	it('saves {source:api, writeMode:false} when user answers n', async () => {
 		const authPath = tmp.path('auth.json');
 		const configPath = tmp.path('config.json');
-		await writeFile(
-			authPath,
-			JSON.stringify({ username: 'mark@example.com', token: 'tok' }),
-		);
 		const { restore } = captureConsole('log');
 		try {
 			const exitCode = await setupCommand({
@@ -217,10 +215,6 @@ describe('setupCommand — already logged in', () => {
 	it('saves writeMode=false when user hits enter (default)', async () => {
 		const authPath = tmp.path('auth.json');
 		const configPath = tmp.path('config.json');
-		await writeFile(
-			authPath,
-			JSON.stringify({ username: 'mark@example.com', token: 'tok' }),
-		);
 		const { restore } = captureConsole('log');
 		try {
 			const exitCode = await setupCommand({
@@ -240,10 +234,6 @@ describe('setupCommand — already logged in', () => {
 	it('prints current logged-in email and writeMode OFF when config says false', async () => {
 		const authPath = tmp.path('auth.json');
 		const configPath = tmp.path('config.json');
-		await writeFile(
-			authPath,
-			JSON.stringify({ username: 'mark@example.com', token: 'tok' }),
-		);
 		await writeFile(
 			configPath,
 			JSON.stringify({ source: 'api', writeMode: false }),
@@ -267,10 +257,6 @@ describe('setupCommand — already logged in', () => {
 	it('says "not configured" when config is missing', async () => {
 		const authPath = tmp.path('auth.json');
 		const configPath = tmp.path('config.json');
-		await writeFile(
-			authPath,
-			JSON.stringify({ username: 'mark@example.com', token: 'tok' }),
-		);
 		const { lines, restore } = captureConsole('log');
 		try {
 			await setupCommand({
@@ -288,10 +274,6 @@ describe('setupCommand — already logged in', () => {
 	it('shows "Previously using local" when prior config was source=local', async () => {
 		const authPath = tmp.path('auth.json');
 		const configPath = tmp.path('config.json');
-		await writeFile(
-			authPath,
-			JSON.stringify({ username: 'mark@example.com', token: 'tok' }),
-		);
 		await writeFile(
 			configPath,
 			JSON.stringify({ source: 'local', writeMode: false }),
@@ -317,10 +299,6 @@ describe('setupCommand — already logged in', () => {
 	it('recovers from a malformed config file (not JSON)', async () => {
 		const authPath = tmp.path('auth.json');
 		const configPath = tmp.path('config.json');
-		await writeFile(
-			authPath,
-			JSON.stringify({ username: 'mark@example.com', token: 'tok' }),
-		);
 		await writeFile(configPath, 'not json at all');
 		const err = captureConsole('error');
 		const out = captureConsole('log');
@@ -348,10 +326,6 @@ describe('setupCommand — already logged in', () => {
 	it('recovers from a config file with wrong writeMode type', async () => {
 		const authPath = tmp.path('auth.json');
 		const configPath = tmp.path('config.json');
-		await writeFile(
-			authPath,
-			JSON.stringify({ username: 'mark@example.com', token: 'tok' }),
-		);
 		await writeFile(
 			configPath,
 			JSON.stringify({ source: 'api', writeMode: 'yes' }),
