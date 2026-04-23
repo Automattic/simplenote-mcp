@@ -22,7 +22,6 @@ type Stubs = {
 
 function makeDeps(
 	overrides: {
-		platform?: NodeJS.Platform;
 		fileExists?: (path: string) => boolean;
 		loadToken?: () => Promise<{ username: string | null; token: string } | null>;
 		loadConfig?: () => Promise<Config>;
@@ -36,9 +35,9 @@ function makeDeps(
 		configLoads: 0,
 	};
 	const baseLoadToken = overrides.loadToken ?? (async () => null);
-	const baseLoadConfig = overrides.loadConfig ?? (async () => ({ writeMode: false }));
+	const baseLoadConfig =
+		overrides.loadConfig ?? (async () => ({ source: 'api' as const, writeMode: false }));
 	const deps: ResolveDeps = {
-		platform: () => overrides.platform ?? 'linux',
 		fileExists: overrides.fileExists ?? (() => false),
 		loadToken: async () => {
 			stubs.tokenLoads++;
@@ -94,16 +93,48 @@ describe('resolveProvider — missing / invalid config', () => {
 	});
 });
 
-// ---------- B. writeMode=true ----------
+// ---------- B. source=local ----------
 
-describe('resolveProvider — writeMode=true', () => {
+describe('resolveProvider — source=local', () => {
+	it('returns native when the default store exists', async () => {
+		const nativePath = '/fake/native/store.storedata';
+		const { deps, stubs } = makeDeps({
+			fileExists: (p) => p === nativePath,
+			loadConfig: async () => ({ source: 'local', writeMode: false }),
+			nativeStorePath: nativePath,
+		});
+		const provider = await resolveProvider({}, deps);
+		assert.equal(provider, NATIVE);
+		assert.deepEqual(stubs.nativeCalls, [nativePath]);
+		assert.equal(stubs.apiCalls, 0);
+		// source=local is a user choice, not platform-driven — no token lookup.
+		assert.equal(stubs.tokenLoads, 0);
+	});
+
+	it('rejects with a setup hint when the store is missing', async () => {
+		const { deps } = makeDeps({
+			fileExists: () => false,
+			loadConfig: async () => ({ source: 'local', writeMode: false }),
+		});
+		await assert.rejects(
+			() => resolveProvider({}, deps),
+			(err: unknown) =>
+				err instanceof Error &&
+				/Local Simplenote database not found/.test(err.message) &&
+				/simplenote-mcp setup/.test(err.message),
+		);
+	});
+});
+
+// ---------- C. source=api + writeMode=true ----------
+
+describe('resolveProvider — source=api + writeMode=true', () => {
 	it('returns the API provider when a token exists', async () => {
 		const { deps, stubs } = makeDeps({
-			platform: 'darwin',
-			// Even if a native store file happens to exist, writeMode=true should
+			// Even if a native store file happens to exist, source=api should
 			// force the API provider.
 			fileExists: () => true,
-			loadConfig: async () => ({ writeMode: true }),
+			loadConfig: async () => ({ source: 'api', writeMode: true }),
 			loadToken: async () => ({ username: 'a@b.com', token: 'tok' }),
 		});
 		const provider = await resolveProvider({}, deps);
@@ -114,7 +145,7 @@ describe('resolveProvider — writeMode=true', () => {
 
 	it('rejects with a setup hint when no token is present', async () => {
 		const { deps } = makeDeps({
-			loadConfig: async () => ({ writeMode: true }),
+			loadConfig: async () => ({ source: 'api', writeMode: true }),
 			loadToken: async () => null,
 		});
 		await assert.rejects(
@@ -127,63 +158,34 @@ describe('resolveProvider — writeMode=true', () => {
 	});
 });
 
-// ---------- C. writeMode=false + platform fallback ----------
+// ---------- D. source=api + writeMode=false ----------
 
-describe('resolveProvider — writeMode=false fallbacks', () => {
-	it('returns native on darwin when the default store exists', async () => {
-		const nativePath = '/fake/native/store.storedata';
+describe('resolveProvider — source=api + writeMode=false', () => {
+	it('returns the API provider when a token exists', async () => {
 		const { deps, stubs } = makeDeps({
-			platform: 'darwin',
-			fileExists: (p) => p === nativePath,
-			loadConfig: async () => ({ writeMode: false }),
-			nativeStorePath: nativePath,
-		});
-		const provider = await resolveProvider({}, deps);
-		assert.equal(provider, NATIVE);
-		assert.deepEqual(stubs.nativeCalls, [nativePath]);
-		assert.equal(stubs.apiCalls, 0);
-	});
-
-	it('falls back to API on linux with no native store when a token exists', async () => {
-		const { deps, stubs } = makeDeps({
-			platform: 'linux',
-			fileExists: () => false,
-			loadConfig: async () => ({ writeMode: false }),
+			// A native store file on disk should be ignored when source=api.
+			fileExists: () => true,
+			loadConfig: async () => ({ source: 'api', writeMode: false }),
 			loadToken: async () => ({ username: 'a@b.com', token: 'tok' }),
 		});
 		const provider = await resolveProvider({}, deps);
 		assert.equal(provider, API);
 		assert.equal(stubs.apiCalls, 1);
+		assert.equal(stubs.nativeCalls.length, 0);
 	});
 
-	it('rejects with a setup hint on linux with no store and no token', async () => {
+	it('rejects with a setup hint when no token is present', async () => {
 		const { deps } = makeDeps({
-			platform: 'linux',
-			fileExists: () => false,
-			loadConfig: async () => ({ writeMode: false }),
+			loadConfig: async () => ({ source: 'api', writeMode: false }),
 			loadToken: async () => null,
 		});
 		await assert.rejects(
 			() => resolveProvider({}, deps),
 			(err: unknown) =>
 				err instanceof Error &&
-				/No data source available/.test(err.message) &&
+				/No auth token/.test(err.message) &&
 				/simplenote-mcp setup/.test(err.message),
 		);
-	});
-
-	it('falls back to API on darwin with no native store but a token present', async () => {
-		// Covers the "Mac user without the desktop app" case: writeMode=false,
-		// native store missing, token in place → API (read-only).
-		const { deps, stubs } = makeDeps({
-			platform: 'darwin',
-			fileExists: () => false,
-			loadConfig: async () => ({ writeMode: false }),
-			loadToken: async () => ({ username: 'a@b.com', token: 'tok' }),
-		});
-		const provider = await resolveProvider({}, deps);
-		assert.equal(provider, API);
-		assert.equal(stubs.apiCalls, 1);
 	});
 });
 
@@ -198,10 +200,10 @@ function captureStderr(): { lines: string[]; restore: () => void } {
 }
 
 describe('resolveProvider — --path overrides', () => {
-	it('warns on stderr when --path coincides with writeMode=true', async () => {
+	it('warns on stderr when --path coincides with source=api + writeMode=true', async () => {
 		const { deps, stubs } = makeDeps({
 			fileExists: () => true,
-			loadConfig: async () => ({ writeMode: true }),
+			loadConfig: async () => ({ source: 'api', writeMode: true }),
 			loadToken: async () => {
 				throw new Error('loadToken should not be called when --path is used');
 			},
@@ -223,10 +225,10 @@ describe('resolveProvider — --path overrides', () => {
 		);
 	});
 
-	it('does not warn on stderr when --path coincides with writeMode=false', async () => {
+	it('does not warn on stderr when --path coincides with source=api + writeMode=false', async () => {
 		const { deps } = makeDeps({
 			fileExists: () => true,
-			loadConfig: async () => ({ writeMode: false }),
+			loadConfig: async () => ({ source: 'api', writeMode: false }),
 		});
 		const { lines, restore } = captureStderr();
 		let provider: Provider;
@@ -261,7 +263,7 @@ describe('resolveProvider — --path overrides', () => {
 	it('still errors when --path points to a nonexistent file', async () => {
 		const { deps } = makeDeps({
 			fileExists: () => false,
-			loadConfig: async () => ({ writeMode: true }),
+			loadConfig: async () => ({ source: 'api', writeMode: true }),
 		});
 		await assert.rejects(
 			() => resolveProvider({ explicitPath: '/missing/store.storedata' }, deps),

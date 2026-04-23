@@ -2,7 +2,12 @@ import { chmod, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promi
 import { dirname } from 'node:path';
 import { getConfigPath } from './paths.js';
 
-export type Config = { writeMode: boolean };
+export type ConfigSource = 'local' | 'api';
+export type Config = {
+	source: ConfigSource;
+	// Only meaningful when source === 'api'. Saved as false for source === 'local'.
+	writeMode: boolean;
+};
 
 export type ConfigErrorCode = 'missing' | 'invalid';
 
@@ -44,13 +49,19 @@ export async function loadConfig(opts: LoadConfigOptions = {}): Promise<Config> 
 		throw new ConfigError('invalid', `Config file at ${path} is not a JSON object.`);
 	}
 	const obj = parsed as Record<string, unknown>;
+	if (obj.source !== 'local' && obj.source !== 'api') {
+		throw new ConfigError(
+			'invalid',
+			`Config file at ${path} is missing a "source" field of "local" or "api".`,
+		);
+	}
 	if (typeof obj.writeMode !== 'boolean') {
 		throw new ConfigError(
 			'invalid',
 			`Config file at ${path} is missing a boolean "writeMode" field.`,
 		);
 	}
-	return { writeMode: obj.writeMode };
+	return { source: obj.source, writeMode: obj.writeMode };
 }
 
 export async function saveConfig(
@@ -59,7 +70,7 @@ export async function saveConfig(
 ): Promise<string> {
 	const path = opts.configPath ?? getConfigPath();
 	await mkdir(dirname(path), { recursive: true });
-	const payload = `${JSON.stringify({ writeMode: config.writeMode }, null, 2)}\n`;
+	const payload = `${JSON.stringify({ source: config.source, writeMode: config.writeMode }, null, 2)}\n`;
 	// Write to a temp file, force mode 0644, then atomically rename.
 	// writeFile({mode}) only applies on create, so an existing file with
 	// looser perms would keep them — chmod guarantees 0644 every save.

@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { homedir, platform } from 'node:os';
+import { homedir } from 'node:os';
 import { loadToken, type AuthToken } from './auth.js';
 import { ConfigError, loadConfig, type Config } from './config.js';
 import type { Provider } from './normalize.js';
@@ -13,7 +13,6 @@ export type ResolveOptions = {
 };
 
 export type ResolveDeps = {
-	platform?: () => NodeJS.Platform;
 	fileExists?: (path: string) => boolean;
 	loadToken?: () => Promise<AuthToken | null>;
 	loadConfig?: () => Promise<Config>;
@@ -26,7 +25,6 @@ export async function resolveProvider(
 	options: ResolveOptions = {},
 	deps: ResolveDeps = {},
 ): Promise<Provider> {
-	const platformFn = deps.platform ?? platform;
 	const fileExists = deps.fileExists ?? existsSync;
 	const tokenLoader = deps.loadToken ?? loadToken;
 	const configLoader = deps.loadConfig ?? (() => loadConfig());
@@ -35,8 +33,9 @@ export async function resolveProvider(
 	const makeApi = deps.makeApi ?? createApiProvider;
 
 	// --path overrides everything. Loading config is best-effort: we only do it
-	// so we can warn about writeMode=true + --path conflicting. A missing or
-	// malformed config should never block an explicit path.
+	// so we can warn when the user explicitly enabled write-mode but --path is
+	// now forcing a read-only native provider. Missing or malformed config
+	// should never block an explicit path.
 	if (options.explicitPath) {
 		if (!fileExists(options.explicitPath)) {
 			throw new Error(
@@ -46,7 +45,7 @@ export async function resolveProvider(
 		}
 		try {
 			const config = await configLoader();
-			if (config.writeMode) {
+			if (config.source === 'api' && config.writeMode) {
 				console.error(
 					'Note: --path overrides write-mode. Using native provider (read-only) for this session.',
 				);
@@ -74,8 +73,19 @@ export async function resolveProvider(
 		throw err;
 	}
 
+	if (config.source === 'local') {
+		if (!fileExists(nativePath)) {
+			throw new Error(
+				'Local Simplenote database not found. Run `simplenote-mcp setup` to switch to API mode.',
+			);
+		}
+		return makeNative(nativePath);
+	}
+
+	// source === 'api' from here. writeMode gates the error message copy but
+	// both paths need a token.
+	const token = await tokenLoader();
 	if (config.writeMode) {
-		const token = await tokenLoader();
 		if (!token) {
 			throw new Error(
 				'Write-mode is enabled but no auth token found. Run `simplenote-mcp setup`.',
@@ -84,19 +94,10 @@ export async function resolveProvider(
 		return makeApi();
 	}
 
-	// writeMode === false: prefer the local native store on mac, otherwise fall
-	// back to the API in read-only mode when we have a token.
-	const isMac = platformFn() === 'darwin';
-	if (isMac && fileExists(nativePath)) {
-		return makeNative(nativePath);
+	if (!token) {
+		throw new Error(
+			'No auth token found. Run `simplenote-mcp setup` to authenticate.',
+		);
 	}
-
-	const token = await tokenLoader();
-	if (token) {
-		return makeApi();
-	}
-
-	throw new Error(
-		'No data source available. Run `simplenote-mcp setup` to authenticate.',
-	);
+	return makeApi();
 }

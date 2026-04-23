@@ -7,7 +7,12 @@ import type { Interface } from 'node:readline/promises';
 import { AuthError } from '../src/providers/auth.ts';
 import { _test } from '../src/cli.ts';
 
-const { reportAuthError, parseWriteModeResponse, setupCommand } = _test;
+const {
+	reportAuthError,
+	parseWriteModeResponse,
+	parseUseLocalResponse,
+	setupCommand,
+} = _test;
 
 function captureStderr(run: () => void): string[] {
 	const calls: string[] = [];
@@ -100,7 +105,38 @@ describe('parseWriteModeResponse', () => {
 	});
 });
 
+describe('parseUseLocalResponse', () => {
+	it('returns true for empty/whitespace (default Y)', () => {
+		assert.equal(parseUseLocalResponse(''), true);
+		assert.equal(parseUseLocalResponse('   '), true);
+		assert.equal(parseUseLocalResponse('\t'), true);
+	});
+
+	it('returns true for y/yes in any case', () => {
+		assert.equal(parseUseLocalResponse('y'), true);
+		assert.equal(parseUseLocalResponse('Y'), true);
+		assert.equal(parseUseLocalResponse('yes'), true);
+		assert.equal(parseUseLocalResponse('YES'), true);
+	});
+
+	it('returns false for n/no and anything else', () => {
+		assert.equal(parseUseLocalResponse('n'), false);
+		assert.equal(parseUseLocalResponse('no'), false);
+		assert.equal(parseUseLocalResponse('N'), false);
+		assert.equal(parseUseLocalResponse('NO'), false);
+		assert.equal(parseUseLocalResponse('maybe'), false);
+	});
+});
+
 // ---------- setupCommand helpers ----------
+
+// Defaults for tests: local-DB detection off, so the local-DB prompt is
+// skipped and the existing flow is exercised. Tests exercising the local
+// branch pass their own platform/fileExists overrides.
+const NO_LOCAL = {
+	platform: () => 'linux' as NodeJS.Platform,
+	fileExists: () => false,
+};
 
 // A minimal readline Interface stand-in that replays scripted responses for
 // each prompt in order. Extra prompts throw so tests surface unexpected flow.
@@ -195,10 +231,11 @@ describe('setupCommand — already logged in', () => {
 		await rm(dir, { recursive: true, force: true });
 	});
 
-	it('saves writeMode=true when user answers y', async () => {
+	it('saves {source:api, writeMode:true} when user answers y', async () => {
 		const { restore } = captureStdout();
 		try {
 			const exitCode = await setupCommand({
+				...NO_LOCAL,
 				authPath,
 				configPath,
 				createPrompt: makePrompt(['y']),
@@ -208,13 +245,14 @@ describe('setupCommand — already logged in', () => {
 			restore();
 		}
 		const config = JSON.parse(await readFile(configPath, 'utf-8'));
-		assert.deepEqual(config, { writeMode: true });
+		assert.deepEqual(config, { source: 'api', writeMode: true });
 	});
 
-	it('saves writeMode=false when user answers n', async () => {
+	it('saves {source:api, writeMode:false} when user answers n', async () => {
 		const { restore } = captureStdout();
 		try {
 			const exitCode = await setupCommand({
+				...NO_LOCAL,
 				authPath,
 				configPath,
 				createPrompt: makePrompt(['n']),
@@ -224,13 +262,14 @@ describe('setupCommand — already logged in', () => {
 			restore();
 		}
 		const config = JSON.parse(await readFile(configPath, 'utf-8'));
-		assert.deepEqual(config, { writeMode: false });
+		assert.deepEqual(config, { source: 'api', writeMode: false });
 	});
 
 	it('saves writeMode=false when user hits enter (default)', async () => {
 		const { restore } = captureStdout();
 		try {
 			const exitCode = await setupCommand({
+				...NO_LOCAL,
 				authPath,
 				configPath,
 				createPrompt: makePrompt(['']),
@@ -240,14 +279,18 @@ describe('setupCommand — already logged in', () => {
 			restore();
 		}
 		const config = JSON.parse(await readFile(configPath, 'utf-8'));
-		assert.deepEqual(config, { writeMode: false });
+		assert.deepEqual(config, { source: 'api', writeMode: false });
 	});
 
 	it('prints current logged-in email and writeMode OFF when config says false', async () => {
-		await writeFile(configPath, JSON.stringify({ writeMode: false }));
+		await writeFile(
+			configPath,
+			JSON.stringify({ source: 'api', writeMode: false }),
+		);
 		const { lines, restore } = captureStdout();
 		try {
 			await setupCommand({
+				...NO_LOCAL,
 				authPath,
 				configPath,
 				createPrompt: makePrompt(['']),
@@ -264,6 +307,7 @@ describe('setupCommand — already logged in', () => {
 		const { lines, restore } = captureStdout();
 		try {
 			await setupCommand({
+				...NO_LOCAL,
 				authPath,
 				configPath,
 				createPrompt: makePrompt(['']),
@@ -272,6 +316,29 @@ describe('setupCommand — already logged in', () => {
 			restore();
 		}
 		assert.match(lines.join('\n'), /Write-mode is currently: not configured/);
+	});
+
+	it('shows "Previously using local" when prior config was source=local', async () => {
+		await writeFile(
+			configPath,
+			JSON.stringify({ source: 'local', writeMode: false }),
+		);
+		const { lines, restore } = captureStdout();
+		try {
+			await setupCommand({
+				...NO_LOCAL,
+				authPath,
+				configPath,
+				createPrompt: makePrompt(['']),
+			});
+		} finally {
+			restore();
+		}
+		const joined = lines.join('\n');
+		assert.match(joined, /Logged in as mark@example\.com/);
+		assert.match(joined, /Previously using local Simplenote database/);
+		// No ON/OFF display in this branch — writeMode wasn't a prior choice.
+		assert.ok(!/Write-mode is currently: (ON|OFF)/.test(joined));
 	});
 
 	it('recovers from a malformed config file (not JSON)', async () => {
@@ -284,6 +351,7 @@ describe('setupCommand — already logged in', () => {
 		let exitCode: number;
 		try {
 			exitCode = await setupCommand({
+				...NO_LOCAL,
 				authPath,
 				configPath,
 				createPrompt: makePrompt(['y']),
@@ -298,11 +366,14 @@ describe('setupCommand — already logged in', () => {
 			'expected stderr note about malformed config',
 		);
 		const config = JSON.parse(await readFile(configPath, 'utf-8'));
-		assert.deepEqual(config, { writeMode: true });
+		assert.deepEqual(config, { source: 'api', writeMode: true });
 	});
 
 	it('recovers from a config file with wrong writeMode type', async () => {
-		await writeFile(configPath, JSON.stringify({ writeMode: 'yes' }));
+		await writeFile(
+			configPath,
+			JSON.stringify({ source: 'api', writeMode: 'yes' }),
+		);
 		const errLines: string[] = [];
 		const restoreErr = mock.method(console, 'error', (msg: unknown) => {
 			errLines.push(String(msg));
@@ -311,6 +382,7 @@ describe('setupCommand — already logged in', () => {
 		let exitCode: number;
 		try {
 			exitCode = await setupCommand({
+				...NO_LOCAL,
 				authPath,
 				configPath,
 				createPrompt: makePrompt(['n']),
@@ -325,7 +397,7 @@ describe('setupCommand — already logged in', () => {
 			'expected stderr note about malformed config',
 		);
 		const config = JSON.parse(await readFile(configPath, 'utf-8'));
-		assert.deepEqual(config, { writeMode: false });
+		assert.deepEqual(config, { source: 'api', writeMode: false });
 	});
 });
 
@@ -369,6 +441,7 @@ describe('setupCommand — not logged in', () => {
 		let exitCode: number;
 		try {
 			exitCode = await setupCommand({
+				...NO_LOCAL,
 				authPath,
 				configPath,
 				createPrompt: makePrompt(['mark@example.com', 'T7YLLP', 'y']),
@@ -381,7 +454,7 @@ describe('setupCommand — not logged in', () => {
 		const auth = JSON.parse(await readFile(authPath, 'utf-8'));
 		assert.deepEqual(auth, { username: 'mark@example.com', token: 'tok123' });
 		const config = JSON.parse(await readFile(configPath, 'utf-8'));
-		assert.deepEqual(config, { writeMode: true });
+		assert.deepEqual(config, { source: 'api', writeMode: true });
 	});
 
 	it('exits 1 on network failure and writes no config', async () => {
@@ -394,6 +467,7 @@ describe('setupCommand — not logged in', () => {
 		let exitCode: number;
 		try {
 			exitCode = await setupCommand({
+				...NO_LOCAL,
 				authPath,
 				configPath,
 				createPrompt: makePrompt(['mark@example.com']),
@@ -415,6 +489,7 @@ describe('setupCommand — not logged in', () => {
 		let exitCode: number;
 		try {
 			exitCode = await setupCommand({
+				...NO_LOCAL,
 				authPath,
 				configPath,
 				createPrompt: makePrompt(['']),
@@ -427,5 +502,125 @@ describe('setupCommand — not logged in', () => {
 		assert.equal(await fileExists(authPath), false);
 		assert.equal(await fileExists(configPath), false);
 		assert.ok(errLines.some((l) => /Email is required/.test(l)));
+	});
+});
+
+// ---------- setupCommand — local DB detection ----------
+
+const LOCAL_AVAILABLE = {
+	platform: () => 'darwin' as NodeJS.Platform,
+	fileExists: () => true,
+	nativeStorePath: '/fake/native/store.storedata',
+};
+
+describe('setupCommand — local DB detected', () => {
+	let dir: string;
+	let authPath: string;
+	let configPath: string;
+	let savedEnvToken: string | undefined;
+
+	beforeEach(async () => {
+		dir = await mkdtemp(join(tmpdir(), 'smn-setup-local-'));
+		authPath = join(dir, 'auth.json');
+		configPath = join(dir, 'config.json');
+		savedEnvToken = process.env.SIMPLENOTE_TOKEN;
+		delete process.env.SIMPLENOTE_TOKEN;
+	});
+
+	afterEach(async () => {
+		mock.restoreAll();
+		if (savedEnvToken === undefined) {
+			delete process.env.SIMPLENOTE_TOKEN;
+		} else {
+			process.env.SIMPLENOTE_TOKEN = savedEnvToken;
+		}
+		await rm(dir, { recursive: true, force: true });
+	});
+
+	it('saves source=local when user accepts (Y), skipping writeMode and login', async () => {
+		// No auth.json on disk. The local-DB choice should not require login.
+		const { restore } = captureStdout();
+		let exitCode: number;
+		try {
+			exitCode = await setupCommand({
+				...LOCAL_AVAILABLE,
+				authPath,
+				configPath,
+				createPrompt: makePrompt(['y']),
+			});
+		} finally {
+			restore();
+		}
+		assert.equal(exitCode, 0);
+		const config = JSON.parse(await readFile(configPath, 'utf-8'));
+		assert.deepEqual(config, { source: 'local', writeMode: false });
+		// No auth written — we never ran the login flow.
+		assert.equal(await fileExists(authPath), false);
+	});
+
+	it('saves source=local when user hits enter (default is Y)', async () => {
+		const { restore } = captureStdout();
+		let exitCode: number;
+		try {
+			exitCode = await setupCommand({
+				...LOCAL_AVAILABLE,
+				authPath,
+				configPath,
+				createPrompt: makePrompt(['']),
+			});
+		} finally {
+			restore();
+		}
+		assert.equal(exitCode, 0);
+		const config = JSON.parse(await readFile(configPath, 'utf-8'));
+		assert.deepEqual(config, { source: 'local', writeMode: false });
+	});
+
+	it('when user declines local (n), falls through to login + writeMode prompt', async () => {
+		mockFetchQueue([
+			{ status: 200, body: {} },
+			{
+				status: 200,
+				body: { username: 'mark@example.com', sync_token: 'tok123' },
+			},
+		]);
+		const { restore } = captureStdout();
+		let exitCode: number;
+		try {
+			exitCode = await setupCommand({
+				...LOCAL_AVAILABLE,
+				authPath,
+				configPath,
+				// local prompt → n, then email, code, writeMode
+				createPrompt: makePrompt(['n', 'mark@example.com', 'T7YLLP', 'y']),
+			});
+		} finally {
+			restore();
+		}
+		assert.equal(exitCode, 0);
+		const config = JSON.parse(await readFile(configPath, 'utf-8'));
+		assert.deepEqual(config, { source: 'api', writeMode: true });
+	});
+
+	it('when user declines local (n) and is already logged in, skips login but still asks writeMode', async () => {
+		await writeFile(
+			authPath,
+			JSON.stringify({ username: 'mark@example.com', token: 'tok' }),
+		);
+		const { restore } = captureStdout();
+		let exitCode: number;
+		try {
+			exitCode = await setupCommand({
+				...LOCAL_AVAILABLE,
+				authPath,
+				configPath,
+				createPrompt: makePrompt(['n', 'y']),
+			});
+		} finally {
+			restore();
+		}
+		assert.equal(exitCode, 0);
+		const config = JSON.parse(await readFile(configPath, 'utf-8'));
+		assert.deepEqual(config, { source: 'api', writeMode: true });
 	});
 });
