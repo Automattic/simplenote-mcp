@@ -8,10 +8,22 @@ afterEach(() => {
 	mock.restoreAll();
 });
 
-// A distinct tag on each stub provider lets tests assert *which* provider was
-// returned without caring about its internals.
-const NATIVE = { kind: 'native-stub' } as unknown as Provider;
-const API = { kind: 'api-stub' } as unknown as Provider;
+// Stubs mirror the real Provider shape. The API stub includes write methods
+// so tests can verify that writeMode=false strips them off the returned
+// provider; the native stub has no write methods since the real one doesn't
+// either.
+const NATIVE: Provider = {
+	name: 'native-macos',
+	description: 'test-native',
+	loadStore: async () => ({ notes: [], tags: [] }),
+};
+const API: Provider = {
+	name: 'simperium-api',
+	description: 'test-api',
+	loadStore: async () => ({ notes: [], tags: [] }),
+	createNote: async () => ({ id: 'stub-id', version: 1 }),
+	updateNote: async () => ({ id: 'stub-id', version: 2 }),
+};
 
 type Stubs = {
 	nativeCalls: string[];
@@ -129,7 +141,7 @@ describe('resolveProvider — source=local', () => {
 // ---------- C. source=api + writeMode=true ----------
 
 describe('resolveProvider — source=api + writeMode=true', () => {
-	it('returns the API provider when a token exists', async () => {
+	it('returns the API provider with write methods when a token exists', async () => {
 		const { deps, stubs } = makeDeps({
 			// Even if a native store file happens to exist, source=api should
 			// force the API provider.
@@ -138,7 +150,9 @@ describe('resolveProvider — source=api + writeMode=true', () => {
 			loadToken: async () => ({ username: 'a@b.com', token: 'tok' }),
 		});
 		const provider = await resolveProvider({}, deps);
-		assert.equal(provider, API);
+		assert.equal(provider.name, 'simperium-api');
+		assert.equal(typeof provider.createNote, 'function');
+		assert.equal(typeof provider.updateNote, 'function');
 		assert.equal(stubs.apiCalls, 1);
 		assert.equal(stubs.nativeCalls.length, 0);
 	});
@@ -169,9 +183,27 @@ describe('resolveProvider — source=api + writeMode=false', () => {
 			loadToken: async () => ({ username: 'a@b.com', token: 'tok' }),
 		});
 		const provider = await resolveProvider({}, deps);
-		assert.equal(provider, API);
+		assert.equal(provider.name, 'simperium-api');
 		assert.equal(stubs.apiCalls, 1);
 		assert.equal(stubs.nativeCalls.length, 0);
+	});
+
+	it('strips createNote and updateNote from the provider (read-only)', async () => {
+		const { deps } = makeDeps({
+			loadConfig: async () => ({ source: 'api', writeMode: false }),
+			loadToken: async () => ({ username: 'a@b.com', token: 'tok' }),
+		});
+		const provider = await resolveProvider({}, deps);
+		assert.equal(
+			provider.createNote,
+			undefined,
+			'createNote must not be exposed in read-only mode',
+		);
+		assert.equal(
+			provider.updateNote,
+			undefined,
+			'updateNote must not be exposed in read-only mode',
+		);
 	});
 
 	it('rejects with a setup hint when no token is present', async () => {
