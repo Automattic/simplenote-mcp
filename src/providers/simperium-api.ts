@@ -197,10 +197,12 @@ async function postNote(
 	noteId: string,
 	data: Record<string, unknown>,
 	token: string,
+	operation: 'create' | 'update' = 'create',
 ): Promise<NoteCreateResult> {
 	// Simperium API: POST /1/{app_id}/{bucket}/i/{object_id}
 	// Returns the created version number
 	const url = `${API_BASE}/${APP_ID}/note/i/${noteId}`;
+	const opLabel = operation === 'update' ? 'updating' : 'creating';
 
 	let res: Response;
 	try {
@@ -216,7 +218,7 @@ async function postNote(
 	} catch (err) {
 		throw new ApiError(
 			'network_error',
-			`Network error creating note: ${(err as Error).message}`,
+			`Network error ${opLabel} note: ${(err as Error).message}`,
 		);
 	}
 
@@ -230,7 +232,7 @@ async function postNote(
 	if (!res.ok) {
 		throw new ApiError(
 			'request_failed',
-			`Simperium API error creating note (HTTP ${res.status}).`,
+			`Simperium API error ${opLabel} note (HTTP ${res.status}).`,
 			res.status,
 		);
 	}
