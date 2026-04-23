@@ -11,7 +11,7 @@ import { resolveProvider } from './providers/resolver.js';
 
 // CLI subcommand dispatch must run before MCP/store setup.
 const subcommand = process.argv[2];
-if (subcommand === 'login' || subcommand === 'logout') {
+if (subcommand === 'setup' || subcommand === 'logout') {
 	const { runSubcommand } = await import('./cli.js');
 	process.exit(await runSubcommand(subcommand));
 }

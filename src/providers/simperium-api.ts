@@ -63,7 +63,7 @@ class SimperiumApiProvider implements Provider {
 		if (!auth) {
 			throw new ApiError(
 				'no_token',
-				'Not logged in. Run `simplenote-mcp login` to authenticate.',
+				'Not logged in. Run `simplenote-mcp setup` to authenticate.',
 			);
 		}
 
@@ -110,7 +110,7 @@ class SimperiumApiProvider implements Provider {
 		if (!auth) {
 			throw new ApiError(
 				'no_token',
-				'Not logged in. Run `simplenote-mcp login` to authenticate.',
+				'Not logged in. Run `simplenote-mcp setup` to authenticate.',
 			);
 		}
 
@@ -147,7 +147,7 @@ class SimperiumApiProvider implements Provider {
 		if (!auth) {
 			throw new ApiError(
 				'no_token',
-				'Not logged in. Run `simplenote-mcp login` to authenticate.',
+				'Not logged in. Run `simplenote-mcp setup` to authenticate.',
 			);
 		}
 
@@ -218,7 +218,7 @@ async function simperiumRequest(opts: {
 	if (res.status === 401) {
 		throw new ApiError(
 			'unauthorized',
-			'Token rejected. Run `simplenote-mcp login` to re-authenticate.',
+			'Token rejected. Run `simplenote-mcp setup` to re-authenticate.',
 			401,
 		);
 	}
