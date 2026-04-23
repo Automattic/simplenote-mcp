@@ -22,24 +22,42 @@ function mockFetch(impl: FetchImpl) {
 	mock.method(globalThis, 'fetch', impl as unknown as typeof globalThis.fetch);
 }
 
-// Helper to create a mock note index response
-function mockNoteIndex(notes: Array<{ id: string; content: string; tags?: string[]; markdown?: boolean; pinned?: boolean; created?: string; modified?: string; deleted?: boolean }>) {
+// Matches GET of the raw note: /1/{app}/note/i/{id}  (no trailing /index, no version)
+function isRawNoteGet(url: string, method?: string): boolean {
+	return (
+		(method === undefined || method === 'GET') &&
+		/\/note\/i\/[^/?]+$/.test(url) &&
+		!url.includes('/index')
+	);
+}
+
+function isNotePost(method?: string): boolean {
+	return method === 'POST';
+}
+
+type RawNote = {
+	content?: string;
+	tags?: string[];
+	systemTags?: string[];
+	deleted?: boolean;
+	creationDate?: number;
+	modificationDate?: number;
+	publishURL?: string;
+	shareURL?: string;
+	[k: string]: unknown;
+};
+
+function rawNoteResponse(note: RawNote): Response {
 	return Response.json({
-		index: notes.map((n) => ({
-			id: n.id,
-			d: {
-				content: n.content,
-				tags: n.tags ?? [],
-				systemTags: [
-					...(n.markdown !== false ? ['markdown'] : []),
-					...(n.pinned ? ['pinned'] : []),
-				],
-				deleted: n.deleted ?? false,
-				creationDate: n.created ? Date.parse(n.created) / 1000 : 1700000000,
-				modificationDate: n.modified ? Date.parse(n.modified) / 1000 : 1700000100,
-			},
-		})),
-		mark: undefined,
+		content: '',
+		tags: [],
+		systemTags: [],
+		deleted: false,
+		creationDate: 1700000000,
+		modificationDate: 1700000100,
+		publishURL: '',
+		shareURL: '',
+		...note,
 	});
 }
 
@@ -50,15 +68,15 @@ describe('updateNote', () => {
 		let capturedMethod: string | undefined;
 
 		mockFetch(async (url: string, opts?: RequestInit) => {
-			if (url.includes('/index')) {
-				if (url.includes('/note/')) {
-					return mockNoteIndex([{ id: 'test-note-123', content: 'Original content' }]);
-				}
-				return Response.json({ index: [], mark: undefined });
+			if (isRawNoteGet(url, opts?.method)) {
+				return rawNoteResponse({ content: 'Original content' });
 			}
-			capturedUrl = url;
-			capturedMethod = opts?.method;
-			return new Response('2', { status: 200 });
+			if (isNotePost(opts?.method)) {
+				capturedUrl = url;
+				capturedMethod = opts?.method;
+				return new Response('2', { status: 200 });
+			}
+			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
 		});
 
 		await provider.updateNote!({ id: 'test-note-123', content: 'Updated content' });
@@ -72,20 +90,18 @@ describe('updateNote', () => {
 		let capturedBody: Record<string, unknown> | undefined;
 
 		mockFetch(async (url: string, opts?: RequestInit) => {
-			if (url.includes('/index')) {
-				if (url.includes('/note/')) {
-					return mockNoteIndex([{
-						id: 'note-1',
-						content: 'Original',
-						tags: ['existing-tag'],
-						markdown: true,
-						pinned: true,
-					}]);
-				}
-				return Response.json({ index: [], mark: undefined });
+			if (isRawNoteGet(url, opts?.method)) {
+				return rawNoteResponse({
+					content: 'Original',
+					tags: ['existing-tag'],
+					systemTags: ['markdown', 'pinned'],
+				});
 			}
-			capturedBody = JSON.parse(opts?.body as string);
-			return new Response('2', { status: 200 });
+			if (isNotePost(opts?.method)) {
+				capturedBody = JSON.parse(opts?.body as string);
+				return new Response('2', { status: 200 });
+			}
+			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
 		});
 
 		await provider.updateNote!({ id: 'note-1', content: 'New content' });
@@ -99,31 +115,58 @@ describe('updateNote', () => {
 		assert.ok((capturedBody!.systemTags as string[]).includes('pinned'));
 	});
 
+	it('preserves publishURL, shareURL, and unknown systemTags', async () => {
+		const provider = createApiProvider();
+		let capturedBody: Record<string, unknown> | undefined;
+
+		mockFetch(async (url: string, opts?: RequestInit) => {
+			if (isRawNoteGet(url, opts?.method)) {
+				return rawNoteResponse({
+					content: 'Original',
+					systemTags: ['markdown', 'unread', 'some-future-tag'],
+					publishURL: 'https://simp.ly/p/abc123',
+					shareURL: 'https://simp.ly/s/xyz789',
+				});
+			}
+			if (isNotePost(opts?.method)) {
+				capturedBody = JSON.parse(opts?.body as string);
+				return new Response('2', { status: 200 });
+			}
+			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
+		});
+
+		await provider.updateNote!({ id: 'note-1', content: 'New content' });
+
+		assert.equal(capturedBody!.publishURL, 'https://simp.ly/p/abc123');
+		assert.equal(capturedBody!.shareURL, 'https://simp.ly/s/xyz789');
+		const systemTags = capturedBody!.systemTags as string[];
+		assert.ok(systemTags.includes('markdown'));
+		assert.ok(systemTags.includes('unread'));
+		assert.ok(systemTags.includes('some-future-tag'));
+	});
+
 	it('preserves creationDate from existing note', async () => {
 		const provider = createApiProvider();
 		let capturedBody: Record<string, unknown> | undefined;
-		const originalCreationDate = '2024-01-15T10:30:00.000Z';
+		const originalCreationDate = 1705314600;
 
 		mockFetch(async (url: string, opts?: RequestInit) => {
-			if (url.includes('/index')) {
-				if (url.includes('/note/')) {
-					return mockNoteIndex([{
-						id: 'note-1',
-						content: 'Original',
-						created: originalCreationDate,
-					}]);
-				}
-				return Response.json({ index: [], mark: undefined });
+			if (isRawNoteGet(url, opts?.method)) {
+				return rawNoteResponse({
+					content: 'Original',
+					creationDate: originalCreationDate,
+				});
 			}
-			capturedBody = JSON.parse(opts?.body as string);
-			return new Response('2', { status: 200 });
+			if (isNotePost(opts?.method)) {
+				capturedBody = JSON.parse(opts?.body as string);
+				return new Response('2', { status: 200 });
+			}
+			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
 		});
 
 		await provider.updateNote!({ id: 'note-1', content: 'Updated' });
 
-		// creationDate should be preserved (converted to Unix timestamp)
-		const expectedUnix = Math.floor(Date.parse(originalCreationDate) / 1000);
-		assert.equal(capturedBody!.creationDate, expectedUnix);
+		assert.equal(capturedBody!.creationDate, originalCreationDate);
 	});
 
 	it('updates modificationDate to current time', async () => {
@@ -132,14 +175,14 @@ describe('updateNote', () => {
 		const beforeUpdate = Math.floor(Date.now() / 1000);
 
 		mockFetch(async (url: string, opts?: RequestInit) => {
-			if (url.includes('/index')) {
-				if (url.includes('/note/')) {
-					return mockNoteIndex([{ id: 'note-1', content: 'Original' }]);
-				}
-				return Response.json({ index: [], mark: undefined });
+			if (isRawNoteGet(url, opts?.method)) {
+				return rawNoteResponse({ content: 'Original' });
 			}
-			capturedBody = JSON.parse(opts?.body as string);
-			return new Response('2', { status: 200 });
+			if (isNotePost(opts?.method)) {
+				capturedBody = JSON.parse(opts?.body as string);
+				return new Response('2', { status: 200 });
+			}
+			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
 		});
 
 		await provider.updateNote!({ id: 'note-1', content: 'Updated' });
@@ -155,18 +198,17 @@ describe('updateNote', () => {
 		let capturedBody: Record<string, unknown> | undefined;
 
 		mockFetch(async (url: string, opts?: RequestInit) => {
-			if (url.includes('/index')) {
-				if (url.includes('/note/')) {
-					return mockNoteIndex([{
-						id: 'note-1',
-						content: 'Content',
-						tags: ['old-tag'],
-					}]);
-				}
-				return Response.json({ index: [], mark: undefined });
+			if (isRawNoteGet(url, opts?.method)) {
+				return rawNoteResponse({
+					content: 'Content',
+					tags: ['old-tag'],
+				});
 			}
-			capturedBody = JSON.parse(opts?.body as string);
-			return new Response('2', { status: 200 });
+			if (isNotePost(opts?.method)) {
+				capturedBody = JSON.parse(opts?.body as string);
+				return new Response('2', { status: 200 });
+			}
+			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
 		});
 
 		await provider.updateNote!({ id: 'note-1', tags: ['new-tag-1', 'new-tag-2'] });
@@ -177,67 +219,64 @@ describe('updateNote', () => {
 		assert.equal(capturedBody!.content, 'Content');
 	});
 
-	it('toggles markdown in systemTags when markdown=false', async () => {
+	it('removes markdown from systemTags when markdown=false, preserves others', async () => {
 		const provider = createApiProvider();
 		let capturedBody: Record<string, unknown> | undefined;
 
 		mockFetch(async (url: string, opts?: RequestInit) => {
-			if (url.includes('/index')) {
-				if (url.includes('/note/')) {
-					return mockNoteIndex([{
-						id: 'note-1',
-						content: 'Content',
-						markdown: true,
-						pinned: true,
-					}]);
-				}
-				return Response.json({ index: [], mark: undefined });
+			if (isRawNoteGet(url, opts?.method)) {
+				return rawNoteResponse({
+					content: 'Content',
+					systemTags: ['markdown', 'pinned', 'unread'],
+				});
 			}
-			capturedBody = JSON.parse(opts?.body as string);
-			return new Response('2', { status: 200 });
+			if (isNotePost(opts?.method)) {
+				capturedBody = JSON.parse(opts?.body as string);
+				return new Response('2', { status: 200 });
+			}
+			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
 		});
 
 		await provider.updateNote!({ id: 'note-1', markdown: false });
 
-		// markdown should be removed, pinned should be preserved
-		assert.ok(!(capturedBody!.systemTags as string[]).includes('markdown'));
-		assert.ok((capturedBody!.systemTags as string[]).includes('pinned'));
+		const systemTags = capturedBody!.systemTags as string[];
+		assert.ok(!systemTags.includes('markdown'));
+		assert.ok(systemTags.includes('pinned'));
+		assert.ok(systemTags.includes('unread'));
 	});
 
-	it('toggles pinned in systemTags when pinned=true', async () => {
+	it('adds pinned to systemTags when pinned=true, preserves others', async () => {
 		const provider = createApiProvider();
 		let capturedBody: Record<string, unknown> | undefined;
 
 		mockFetch(async (url: string, opts?: RequestInit) => {
-			if (url.includes('/index')) {
-				if (url.includes('/note/')) {
-					return mockNoteIndex([{
-						id: 'note-1',
-						content: 'Content',
-						markdown: true,
-						pinned: false,
-					}]);
-				}
-				return Response.json({ index: [], mark: undefined });
+			if (isRawNoteGet(url, opts?.method)) {
+				return rawNoteResponse({
+					content: 'Content',
+					systemTags: ['markdown', 'unread'],
+				});
 			}
-			capturedBody = JSON.parse(opts?.body as string);
-			return new Response('2', { status: 200 });
+			if (isNotePost(opts?.method)) {
+				capturedBody = JSON.parse(opts?.body as string);
+				return new Response('2', { status: 200 });
+			}
+			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
 		});
 
 		await provider.updateNote!({ id: 'note-1', pinned: true });
 
-		// pinned should be added, markdown should be preserved
-		assert.ok((capturedBody!.systemTags as string[]).includes('pinned'));
-		assert.ok((capturedBody!.systemTags as string[]).includes('markdown'));
+		const systemTags = capturedBody!.systemTags as string[];
+		assert.ok(systemTags.includes('pinned'));
+		assert.ok(systemTags.includes('markdown'));
+		assert.ok(systemTags.includes('unread'));
 	});
 
-	it('throws ApiError(not_found) when note does not exist', async () => {
+	it('throws ApiError(not_found) when GET returns 404', async () => {
 		const provider = createApiProvider();
 
-		mockFetch(async (url: string) => {
-			if (url.includes('/index')) {
-				// Return empty note index
-				return Response.json({ index: [], mark: undefined });
+		mockFetch(async (url: string, opts?: RequestInit) => {
+			if (isRawNoteGet(url, opts?.method)) {
+				return new Response('', { status: 404 });
 			}
 			return new Response('', { status: 200 });
 		});
@@ -248,15 +287,12 @@ describe('updateNote', () => {
 		);
 	});
 
-	it('throws ApiError(unauthorized) on 401', async () => {
+	it('throws ApiError(unauthorized) on 401 from POST', async () => {
 		const provider = createApiProvider();
 
-		mockFetch(async (url: string) => {
-			if (url.includes('/index')) {
-				if (url.includes('/note/')) {
-					return mockNoteIndex([{ id: 'note-1', content: 'Content' }]);
-				}
-				return Response.json({ index: [], mark: undefined });
+		mockFetch(async (url: string, opts?: RequestInit) => {
+			if (isRawNoteGet(url, opts?.method)) {
+				return rawNoteResponse({ content: 'Content' });
 			}
 			return new Response('', { status: 401 });
 		});
@@ -267,57 +303,50 @@ describe('updateNote', () => {
 		);
 	});
 
-	it('throws ApiError(request_failed) on non-2xx', async () => {
+	it('throws ApiError(request_failed) on non-2xx from POST', async () => {
 		const provider = createApiProvider();
 
-		mockFetch(async (url: string) => {
-			if (url.includes('/index')) {
-				if (url.includes('/note/')) {
-					return mockNoteIndex([{ id: 'note-1', content: 'Content' }]);
-				}
-				return Response.json({ index: [], mark: undefined });
+		mockFetch(async (url: string, opts?: RequestInit) => {
+			if (isRawNoteGet(url, opts?.method)) {
+				return rawNoteResponse({ content: 'Content' });
 			}
 			return new Response('', { status: 500 });
 		});
 
 		await assert.rejects(
 			() => provider.updateNote!({ id: 'note-1', content: 'Test' }),
-			(err: unknown) => err instanceof ApiError && err.code === 'request_failed',
+			(err: unknown) =>
+				err instanceof ApiError &&
+				err.code === 'request_failed' &&
+				err.message.includes('updating'),
 		);
 	});
 
-	it('throws ApiError(network_error) when fetch throws', async () => {
+	it('throws ApiError(network_error) with "updating" label when POST fetch throws', async () => {
 		const provider = createApiProvider();
-		let callCount = 0;
 
-		mockFetch(async (url: string) => {
-			if (url.includes('/index')) {
-				if (url.includes('/note/')) {
-					return mockNoteIndex([{ id: 'note-1', content: 'Content' }]);
-				}
-				return Response.json({ index: [], mark: undefined });
+		mockFetch(async (url: string, opts?: RequestInit) => {
+			if (isRawNoteGet(url, opts?.method)) {
+				return rawNoteResponse({ content: 'Content' });
 			}
-			// POST request - throw network error
-			callCount++;
 			throw new Error('Network failure');
 		});
 
 		await assert.rejects(
 			() => provider.updateNote!({ id: 'note-1', content: 'Test' }),
-			(err: unknown) => err instanceof ApiError && err.code === 'network_error',
+			(err: unknown) =>
+				err instanceof ApiError &&
+				err.code === 'network_error' &&
+				err.message.includes('updating'),
 		);
-		assert.equal(callCount, 1);
 	});
 
 	it('parses version from response body', async () => {
 		const provider = createApiProvider();
 
-		mockFetch(async (url: string) => {
-			if (url.includes('/index')) {
-				if (url.includes('/note/')) {
-					return mockNoteIndex([{ id: 'note-1', content: 'Content' }]);
-				}
-				return Response.json({ index: [], mark: undefined });
+		mockFetch(async (url: string, opts?: RequestInit) => {
+			if (isRawNoteGet(url, opts?.method)) {
+				return rawNoteResponse({ content: 'Content' });
 			}
 			return new Response('42', { status: 200 });
 		});
@@ -330,29 +359,28 @@ describe('updateNote', () => {
 		const provider = createApiProvider();
 		let indexFetchCount = 0;
 
-		mockFetch(async (url: string) => {
+		mockFetch(async (url: string, opts?: RequestInit) => {
 			if (url.includes('/index')) {
 				indexFetchCount++;
-				if (url.includes('/note/')) {
-					return mockNoteIndex([{ id: 'note-1', content: 'Content' }]);
-				}
 				return Response.json({ index: [], mark: undefined });
+			}
+			if (isRawNoteGet(url, opts?.method)) {
+				return rawNoteResponse({ content: 'Content' });
 			}
 			return new Response('2', { status: 200 });
 		});
 
-		// Initial load
-		await provider.loadStore();
-		assert.equal(indexFetchCount, 2); // note + tag indices
-
-		// Load again (should use cache)
+		// Initial load (two index fetches: note + tag)
 		await provider.loadStore();
 		assert.equal(indexFetchCount, 2);
 
-		// Update a note
+		// Cached load
+		await provider.loadStore();
+		assert.equal(indexFetchCount, 2);
+
 		await provider.updateNote!({ id: 'note-1', content: 'New content' });
 
-		// Load again (cache should be cleared, need to fetch again)
+		// Load again — cache should be cleared, so two more index fetches
 		await provider.loadStore();
 		assert.equal(indexFetchCount, 4);
 	});
@@ -360,12 +388,9 @@ describe('updateNote', () => {
 	it('returns the note id and version', async () => {
 		const provider = createApiProvider();
 
-		mockFetch(async (url: string) => {
-			if (url.includes('/index')) {
-				if (url.includes('/note/')) {
-					return mockNoteIndex([{ id: 'my-note-id', content: 'Content' }]);
-				}
-				return Response.json({ index: [], mark: undefined });
+		mockFetch(async (url: string, opts?: RequestInit) => {
+			if (isRawNoteGet(url, opts?.method)) {
+				return rawNoteResponse({ content: 'Content' });
 			}
 			return new Response('5', { status: 200 });
 		});
@@ -373,23 +398,5 @@ describe('updateNote', () => {
 		const result = await provider.updateNote!({ id: 'my-note-id', content: 'Updated' });
 		assert.equal(result.id, 'my-note-id');
 		assert.equal(result.version, 5);
-	});
-});
-
-describe('toUnixFromIso', () => {
-	it('converts ISO string to Unix timestamp', async () => {
-		const { toUnixFromIso } = (await import('../src/providers/simperium-api.ts'))._test;
-		assert.equal(toUnixFromIso('1970-01-01T00:00:00.000Z'), 0);
-		assert.equal(toUnixFromIso('2024-01-15T10:30:00.000Z'), 1705314600);
-	});
-
-	it('returns null for null input', async () => {
-		const { toUnixFromIso } = (await import('../src/providers/simperium-api.ts'))._test;
-		assert.equal(toUnixFromIso(null), null);
-	});
-
-	it('returns null for invalid date string', async () => {
-		const { toUnixFromIso } = (await import('../src/providers/simperium-api.ts'))._test;
-		assert.equal(toUnixFromIso('not-a-date'), null);
 	});
 });

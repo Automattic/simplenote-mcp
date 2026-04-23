@@ -154,43 +154,93 @@ class SimperiumApiProvider implements Provider {
 			);
 		}
 
-		// Fetch existing note to merge with
-		const { notes } = await this.loadStore();
-		const existingNote = notes.find((n) => n.id === input.id);
-		if (!existingNote) {
-			throw new ApiError('not_found', `Note not found: ${input.id}`, 404);
+		// Fetch the raw remote record so we preserve fields we don't model in
+		// NormalizedNote (publishURL, shareURL, unknown systemTags, etc.) and
+		// avoid clobbering them on write. Always fresh — bypasses the 60s cache.
+		const existing = await fetchRawNote(input.id, auth.token);
+
+		const existingSystemTags = Array.isArray(existing.systemTags)
+			? existing.systemTags.filter((t): t is string => typeof t === 'string')
+			: [];
+		const systemTags = new Set(existingSystemTags);
+		if (input.markdown !== undefined) {
+			if (input.markdown) systemTags.add('markdown');
+			else systemTags.delete('markdown');
+		}
+		if (input.pinned !== undefined) {
+			if (input.pinned) systemTags.add('pinned');
+			else systemTags.delete('pinned');
 		}
 
-		// Determine final values, preserving existing when not specified
-		const markdown = input.markdown ?? existingNote.markdown;
-		const pinned = input.pinned ?? existingNote.pinned;
-
-		const systemTags: string[] = [];
-		if (markdown) systemTags.push('markdown');
-		if (pinned) systemTags.push('pinned');
-
-		// Preserve creationDate, update modificationDate
-		const nowUnix = Math.floor(Date.now() / 1000);
-		const creationDate = toUnixFromIso(existingNote.created) ?? nowUnix;
-
-		const noteData = {
-			content: input.content ?? existingNote.content,
-			creationDate,
-			modificationDate: nowUnix,
-			deleted: existingNote.deleted,
-			publishURL: '',
-			shareURL: '',
-			systemTags,
-			tags: input.tags ?? existingNote.tags,
+		const noteData: Record<string, unknown> = {
+			...existing,
+			systemTags: Array.from(systemTags),
+			modificationDate: Math.floor(Date.now() / 1000),
 		};
+		if (input.content !== undefined) noteData.content = input.content;
+		if (input.tags !== undefined) noteData.tags = input.tags;
 
-		const result = await postNote(input.id, noteData, auth.token);
+		const result = await postNote(input.id, noteData, auth.token, 'update');
 
 		// Invalidate cache so subsequent reads see the updated note
 		this.clearCache();
 
 		return { id: input.id, version: result.version };
 	}
+}
+
+async function fetchRawNote(
+	noteId: string,
+	token: string,
+): Promise<Record<string, unknown>> {
+	const url = `${API_BASE}/${APP_ID}/note/i/${noteId}`;
+
+	let res: Response;
+	try {
+		res = await fetch(url, {
+			headers: { 'X-Simperium-Token': token },
+			signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+		});
+	} catch (err) {
+		throw new ApiError(
+			'network_error',
+			`Network error fetching note: ${(err as Error).message}`,
+		);
+	}
+
+	if (res.status === 401) {
+		throw new ApiError(
+			'unauthorized',
+			'Token rejected. Run `simplenote-mcp login` to re-authenticate.',
+			401,
+		);
+	}
+	if (res.status === 404) {
+		throw new ApiError('not_found', `Note not found: ${noteId}`, 404);
+	}
+	if (!res.ok) {
+		throw new ApiError(
+			'request_failed',
+			`Simperium API error fetching note (HTTP ${res.status}).`,
+			res.status,
+		);
+	}
+
+	let body: unknown;
+	try {
+		body = await res.json();
+	} catch {
+		throw new ApiError('invalid_response', 'Simperium note returned invalid JSON.');
+	}
+
+	if (!body || typeof body !== 'object') {
+		throw new ApiError(
+			'invalid_response',
+			'Simperium note response was not a JSON object.',
+		);
+	}
+
+	return body as Record<string, unknown>;
 }
 
 async function postNote(
@@ -384,10 +434,4 @@ function toIsoFromUnix(value: unknown): string | null {
 	return new Date(num * 1000).toISOString();
 }
 
-function toUnixFromIso(iso: string | null): number | null {
-	if (!iso) return null;
-	const ms = Date.parse(iso);
-	return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
-}
-
-export const _test = { normalizeNote, normalizeTag, toBool, toIsoFromUnix, toUnixFromIso };
+export const _test = { normalizeNote, normalizeTag, toBool, toIsoFromUnix };
