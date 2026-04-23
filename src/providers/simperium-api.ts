@@ -411,4 +411,11 @@ function toIsoFromUnix(value: unknown): string | null {
 	return new Date(num * 1000).toISOString();
 }
 
-export const _test = { normalizeNote, normalizeTag, toBool, toIsoFromUnix };
+export const _test = {
+	normalizeNote,
+	normalizeTag,
+	toBool,
+	toIsoFromUnix,
+	mergeSystemTags,
+	simperiumRequest,
+};

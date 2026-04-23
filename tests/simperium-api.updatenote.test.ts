@@ -1,65 +1,15 @@
-import { afterEach, beforeEach, describe, it, mock } from 'node:test';
+import { describe, it } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { ApiError, createApiProvider } from '../src/providers/simperium-api.ts';
+import {
+	isNotePost,
+	isRawNoteGet,
+	mockFetch,
+	rawNoteResponse,
+	setupTestToken,
+} from './helpers/simperium.ts';
 
-// Provide a token without hitting auth.json.
-let savedToken: string | undefined;
-
-beforeEach(() => {
-	savedToken = process.env.SIMPLENOTE_TOKEN;
-	process.env.SIMPLENOTE_TOKEN = 'test-token';
-});
-
-afterEach(() => {
-	mock.restoreAll();
-	if (savedToken === undefined) delete process.env.SIMPLENOTE_TOKEN;
-	else process.env.SIMPLENOTE_TOKEN = savedToken;
-});
-
-type FetchImpl = (url: string, opts?: RequestInit) => Promise<Response> | Response;
-
-function mockFetch(impl: FetchImpl) {
-	mock.method(globalThis, 'fetch', impl as unknown as typeof globalThis.fetch);
-}
-
-// Matches GET of the raw note: /1/{app}/note/i/{id}  (no trailing /index, no version)
-function isRawNoteGet(url: string, method?: string): boolean {
-	return (
-		(method === undefined || method === 'GET') &&
-		/\/note\/i\/[^/?]+$/.test(url) &&
-		!url.includes('/index')
-	);
-}
-
-function isNotePost(method?: string): boolean {
-	return method === 'POST';
-}
-
-type RawNote = {
-	content?: string;
-	tags?: string[];
-	systemTags?: string[];
-	deleted?: boolean;
-	creationDate?: number;
-	modificationDate?: number;
-	publishURL?: string;
-	shareURL?: string;
-	[k: string]: unknown;
-};
-
-function rawNoteResponse(note: RawNote): Response {
-	return Response.json({
-		content: '',
-		tags: [],
-		systemTags: [],
-		deleted: false,
-		creationDate: 1700000000,
-		modificationDate: 1700000100,
-		publishURL: '',
-		shareURL: '',
-		...note,
-	});
-}
+setupTestToken();
 
 describe('updateNote', () => {
 	it('sends POST to the correct URL with note ID', async () => {
@@ -385,18 +335,4 @@ describe('updateNote', () => {
 		assert.equal(indexFetchCount, 4);
 	});
 
-	it('returns the note id and version', async () => {
-		const provider = createApiProvider();
-
-		mockFetch(async (url: string, opts?: RequestInit) => {
-			if (isRawNoteGet(url, opts?.method)) {
-				return rawNoteResponse({ content: 'Content' });
-			}
-			return new Response('5', { status: 200 });
-		});
-
-		const result = await provider.updateNote!({ id: 'my-note-id', content: 'Updated' });
-		assert.equal(result.id, 'my-note-id');
-		assert.equal(result.version, 5);
-	});
 });

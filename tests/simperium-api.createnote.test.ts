@@ -1,26 +1,9 @@
-import { afterEach, beforeEach, describe, it, mock } from 'node:test';
+import { describe, it } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { ApiError, createApiProvider } from '../src/providers/simperium-api.ts';
+import { createApiProvider } from '../src/providers/simperium-api.ts';
+import { mockFetch, setupTestToken } from './helpers/simperium.ts';
 
-// Provide a token without hitting auth.json.
-let savedToken: string | undefined;
-
-beforeEach(() => {
-	savedToken = process.env.SIMPLENOTE_TOKEN;
-	process.env.SIMPLENOTE_TOKEN = 'test-token';
-});
-
-afterEach(() => {
-	mock.restoreAll();
-	if (savedToken === undefined) delete process.env.SIMPLENOTE_TOKEN;
-	else process.env.SIMPLENOTE_TOKEN = savedToken;
-});
-
-type FetchImpl = (url: string, opts?: RequestInit) => Promise<Response> | Response;
-
-function mockFetch(impl: FetchImpl) {
-	mock.method(globalThis, 'fetch', impl as unknown as typeof globalThis.fetch);
-}
+setupTestToken();
 
 describe('createNote', () => {
 	it('sends a POST to the Simperium API with correct payload', async () => {
@@ -103,59 +86,6 @@ describe('createNote', () => {
 		assert.ok(!(capturedBody!.systemTags as string[]).includes('markdown'));
 	});
 
-	it('throws ApiError(unauthorized) on 401', async () => {
-		const provider = createApiProvider();
-
-		mockFetch(async () => new Response('', { status: 401 }));
-
-		await assert.rejects(
-			() => provider.createNote!({ content: 'Test' }),
-			(err: unknown) => err instanceof ApiError && err.code === 'unauthorized',
-		);
-	});
-
-	it('throws ApiError(request_failed) on non-2xx', async () => {
-		const provider = createApiProvider();
-
-		mockFetch(async () => new Response('', { status: 500 }));
-
-		await assert.rejects(
-			() => provider.createNote!({ content: 'Test' }),
-			(err: unknown) => err instanceof ApiError && err.code === 'request_failed',
-		);
-	});
-
-	it('throws ApiError(network_error) when fetch throws', async () => {
-		const provider = createApiProvider();
-
-		mockFetch(async () => {
-			throw new Error('Network failure');
-		});
-
-		await assert.rejects(
-			() => provider.createNote!({ content: 'Test' }),
-			(err: unknown) => err instanceof ApiError && err.code === 'network_error',
-		);
-	});
-
-	it('parses version from response body', async () => {
-		const provider = createApiProvider();
-
-		mockFetch(async () => new Response('42', { status: 200 }));
-
-		const result = await provider.createNote!({ content: 'Test' });
-		assert.equal(result.version, 42);
-	});
-
-	it('defaults to version 1 when response is not parseable', async () => {
-		const provider = createApiProvider();
-
-		mockFetch(async () => new Response('not-a-number', { status: 200 }));
-
-		const result = await provider.createNote!({ content: 'Test' });
-		assert.equal(result.version, 1);
-	});
-
 	it('clears cache after creating a note', async () => {
 		const provider = createApiProvider();
 		let fetchCount = 0;
@@ -184,9 +114,3 @@ describe('createNote', () => {
 		assert.equal(fetchCount, 4);
 	});
 });
-
-// Note: Testing the no-token case requires mocking the auth module's file
-// reads, which adds complexity. The no-token error path is tested implicitly
-// through the auth.test.ts file's token loading tests. The createNote function
-// simply calls loadToken() and throws if it returns null, which is
-// straightforward and doesn't require dedicated testing here.
