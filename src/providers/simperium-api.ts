@@ -236,9 +236,11 @@ async function fetchRawNote(
 	noteId: string,
 	token: string,
 ): Promise<Record<string, unknown>> {
+	// Encode the id so a value like `../tag/i/x` can't be normalized away by
+	// the URL parser and redirected to a different bucket.
 	const res = await simperiumRequest({
 		method: 'GET',
-		path: `/note/i/${noteId}`,
+		path: `/note/i/${encodeURIComponent(noteId)}`,
 		token,
 		context: 'fetching note',
 		passthroughStatus: [404],
@@ -269,9 +271,11 @@ async function postNote(
 	operation: 'create' | 'update' = 'create',
 ): Promise<NoteCreateResult> {
 	// Simperium returns the new version number as plain text in the body.
+	// Encode the id so a value like `../tag/i/x` can't be normalized away by
+	// the URL parser and redirected to a different bucket.
 	const res = await simperiumRequest({
 		method: 'POST',
-		path: `/note/i/${noteId}`,
+		path: `/note/i/${encodeURIComponent(noteId)}`,
 		token,
 		body: data,
 		context: operation === 'update' ? 'updating note' : 'creating note',
