@@ -224,14 +224,24 @@ server.registerTool(
 	},
 );
 
-// Register create_note only when write operations are enabled
-if (ALLOW_WRITE) {
+// Register write tools only when write is opted in AND the resolved provider
+// advertises the capability. The native macOS provider does not currently
+// implement create/update, so on macOS with the desktop app installed these
+// tools will not be advertised even if SIMPLENOTE_ALLOW_WRITE=1.
+if (ALLOW_WRITE && !provider.createNote && !provider.updateNote) {
+	console.error(
+		`[simplenote-mcp] SIMPLENOTE_ALLOW_WRITE=1 set, but the active provider (${provider.name}) does not support write operations. Write tools will not be registered.`,
+	);
+}
+
+if (ALLOW_WRITE && provider.createNote) {
+	const createNote = provider.createNote.bind(provider);
 	server.registerTool(
 		'create_note',
 		{
 			title: 'Create Note',
 			description:
-				'Create a new note in Simplenote. Requires SIMPLENOTE_ALLOW_WRITE=1 and the Simperium API provider.',
+				'Create a new note in Simplenote. Requires SIMPLENOTE_ALLOW_WRITE=1 and a provider that supports writes (Simperium API).',
 			inputSchema: {
 				content: z.string().describe('Note content (first line becomes title)'),
 				tags: z
@@ -252,31 +262,8 @@ if (ALLOW_WRITE) {
 			annotations: WRITE_ANNOTATIONS,
 		},
 		async ({ content, tags, markdown, pinned }) => {
-			// Only the API provider supports note creation
-			if (provider.name !== 'simperium-api') {
-				return {
-					content: [
-						{
-							type: 'text',
-							text: 'Error: create_note requires the Simperium API provider. ' +
-								'Run `simplenote-mcp login` to authenticate.',
-						},
-					],
-					isError: true,
-				};
-			}
-
-			if (!provider.createNote) {
-				return {
-					content: [
-						{ type: 'text', text: 'Error: Note creation not implemented for this provider.' },
-					],
-					isError: true,
-				};
-			}
-
 			try {
-				const result = await provider.createNote({ content, tags, markdown, pinned });
+				const result = await createNote({ content, tags, markdown, pinned });
 				return {
 					content: [
 						{
@@ -299,7 +286,10 @@ if (ALLOW_WRITE) {
 			}
 		},
 	);
+}
 
+if (ALLOW_WRITE && provider.updateNote) {
+	const updateNote = provider.updateNote.bind(provider);
 	server.registerTool(
 		'update_note',
 		{
@@ -307,7 +297,7 @@ if (ALLOW_WRITE) {
 			description:
 				'Update an existing note in Simplenote. ' +
 				'TIP: Before updating content, call get_note first to see the current content so you can make informed changes. ' +
-				'Requires SIMPLENOTE_ALLOW_WRITE=1 and the Simperium API provider.',
+				'Requires SIMPLENOTE_ALLOW_WRITE=1 and a provider that supports writes (Simperium API).',
 			inputSchema: {
 				id: z.string().describe('Note ID to update'),
 				content: z.string().optional().describe('New note content'),
@@ -324,7 +314,6 @@ if (ALLOW_WRITE) {
 			annotations: WRITE_ANNOTATIONS,
 		},
 		async ({ id, content, tags, markdown, pinned }) => {
-			// Validate at least one update field is provided
 			if (
 				content === undefined &&
 				tags === undefined &&
@@ -342,41 +331,8 @@ if (ALLOW_WRITE) {
 				};
 			}
 
-			// Only the API provider supports note updates
-			if (provider.name !== 'simperium-api') {
-				return {
-					content: [
-						{
-							type: 'text',
-							text:
-								'Error: update_note requires the Simperium API provider. ' +
-								'Run `simplenote-mcp login` to authenticate.',
-						},
-					],
-					isError: true,
-				};
-			}
-
-			if (!provider.updateNote) {
-				return {
-					content: [
-						{
-							type: 'text',
-							text: 'Error: Note update not implemented for this provider.',
-						},
-					],
-					isError: true,
-				};
-			}
-
 			try {
-				const result = await provider.updateNote({
-					id,
-					content,
-					tags,
-					markdown,
-					pinned,
-				});
+				const result = await updateNote({ id, content, tags, markdown, pinned });
 				return {
 					content: [
 						{
