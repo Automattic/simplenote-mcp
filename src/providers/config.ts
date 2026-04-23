@@ -18,6 +18,10 @@ export class ConfigError extends Error {
 
 export type LoadConfigOptions = { configPath?: string };
 
+// Schema evolution: unknown fields are ignored, so new optional fields can be
+// added in future versions without breaking existing configs. Only add a new
+// *required* field if you also handle the loader's 'invalid' branch as a
+// migration case for users upgrading from older versions.
 export async function loadConfig(opts: LoadConfigOptions = {}): Promise<Config> {
 	const path = opts.configPath ?? getConfigPath();
 	let raw: string;
