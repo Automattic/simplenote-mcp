@@ -273,6 +273,60 @@ describe('setupCommand — already logged in', () => {
 		}
 		assert.match(lines.join('\n'), /Write-mode is currently: not configured/);
 	});
+
+	it('recovers from a malformed config file (not JSON)', async () => {
+		await writeFile(configPath, 'not json at all');
+		const errLines: string[] = [];
+		const restoreErr = mock.method(console, 'error', (msg: unknown) => {
+			errLines.push(String(msg));
+		});
+		const { restore } = captureStdout();
+		let exitCode: number;
+		try {
+			exitCode = await setupCommand({
+				authPath,
+				configPath,
+				createPrompt: makePrompt(['y']),
+			});
+		} finally {
+			restore();
+			restoreErr.mock.restore();
+		}
+		assert.equal(exitCode, 0);
+		assert.ok(
+			errLines.some((l) => /malformed/i.test(l)),
+			'expected stderr note about malformed config',
+		);
+		const config = JSON.parse(await readFile(configPath, 'utf-8'));
+		assert.deepEqual(config, { writeMode: true });
+	});
+
+	it('recovers from a config file with wrong writeMode type', async () => {
+		await writeFile(configPath, JSON.stringify({ writeMode: 'yes' }));
+		const errLines: string[] = [];
+		const restoreErr = mock.method(console, 'error', (msg: unknown) => {
+			errLines.push(String(msg));
+		});
+		const { restore } = captureStdout();
+		let exitCode: number;
+		try {
+			exitCode = await setupCommand({
+				authPath,
+				configPath,
+				createPrompt: makePrompt(['n']),
+			});
+		} finally {
+			restore();
+			restoreErr.mock.restore();
+		}
+		assert.equal(exitCode, 0);
+		assert.ok(
+			errLines.some((l) => /malformed/i.test(l)),
+			'expected stderr note about malformed config',
+		);
+		const config = JSON.parse(await readFile(configPath, 'utf-8'));
+		assert.deepEqual(config, { writeMode: false });
+	});
 });
 
 // ---------- setupCommand — not logged in ----------

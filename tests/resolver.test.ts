@@ -85,7 +85,11 @@ describe('resolveProvider — missing / invalid config', () => {
 		});
 		await assert.rejects(
 			() => resolveProvider({}, deps),
-			(err: unknown) => err instanceof Error && /malformed/.test(err.message),
+			(err: unknown) =>
+				err instanceof Error &&
+				/malformed/.test(err.message) &&
+				/simplenote-mcp setup/.test(err.message) &&
+				!/delete/i.test(err.message),
 		);
 	});
 });

@@ -127,6 +127,10 @@ async function loadCurrentConfigOrNull(configPath?: string): Promise<Config | nu
 		return await loadConfig({ configPath });
 	} catch (err) {
 		if (err instanceof ConfigError && err.code === 'missing') return null;
+		if (err instanceof ConfigError && err.code === 'invalid') {
+			console.error('Existing config is malformed and will be replaced.');
+			return null;
+		}
 		throw err;
 	}
 }

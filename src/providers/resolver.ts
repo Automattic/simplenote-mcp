@@ -68,7 +68,7 @@ export async function resolveProvider(
 		}
 		if (err instanceof ConfigError && err.code === 'invalid') {
 			throw new Error(
-				'Configuration file is malformed. Delete it and re-run `simplenote-mcp setup`.',
+				'Configuration file is malformed. Run `simplenote-mcp setup` to reset it.',
 			);
 		}
 		throw err;
