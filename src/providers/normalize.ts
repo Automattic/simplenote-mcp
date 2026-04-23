@@ -58,6 +58,25 @@ export function extractTitle(content: string | null | undefined): string {
 	return firstLine.length > 0 ? firstLine.slice(0, 100) : '(empty)';
 }
 
+// Markdown-formatted view of a note, used by prompts that want the model to
+// reason about a note's current state before suggesting changes.
+export function formatNoteForDisplay(note: NormalizedNote): string {
+	const tagsDisplay = note.tags.length > 0 ? note.tags.join(', ') : '(none)';
+	const flags =
+		[note.pinned ? 'pinned' : null, note.markdown ? 'markdown' : null]
+			.filter(Boolean)
+			.join(', ') || '(none)';
+	return (
+		`**ID:** ${note.id}\n` +
+		`**Title:** ${extractTitle(note.content)}\n` +
+		`**Tags:** ${tagsDisplay}\n` +
+		`**Flags:** ${flags}\n` +
+		`**Modified:** ${note.modified ?? 'unknown'}\n\n` +
+		`---\n\n` +
+		`${note.content}`
+	);
+}
+
 export function safeJsonStringArray(value: unknown): string[] {
 	if (typeof value !== 'string' || value.length === 0) return [];
 	try {
