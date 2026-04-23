@@ -272,10 +272,12 @@ async function postNote(
 ): Promise<NoteCreateResult> {
 	// Simperium returns the new version number as plain text in the body.
 	// Encode the id so a value like `../tag/i/x` can't be normalized away by
-	// the URL parser and redirected to a different bucket.
+	// the URL parser and redirected to a different bucket. ccid is a per-call
+	// idempotency token: a retry after a network blip won't duplicate the note.
+	const ccid = randomUUID();
 	const res = await simperiumRequest({
 		method: 'POST',
-		path: `/note/i/${encodeURIComponent(noteId)}`,
+		path: `/note/i/${encodeURIComponent(noteId)}?ccid=${ccid}`,
 		token,
 		body: data,
 		context: operation === 'update' ? 'updating note' : 'creating note',

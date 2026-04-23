@@ -31,7 +31,7 @@ describe('updateNote', () => {
 
 		await provider.updateNote!({ id: 'test-note-123', content: 'Updated content' });
 
-		assert.match(capturedUrl!, /api\.simperium\.com\/1\/[^/]+\/note\/i\/test-note-123$/);
+		assert.match(capturedUrl!, /api\.simperium\.com\/1\/[^/]+\/note\/i\/test-note-123(?:\?|$)/);
 		assert.equal(capturedMethod, 'POST');
 	});
 
