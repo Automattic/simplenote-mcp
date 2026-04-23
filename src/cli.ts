@@ -25,7 +25,8 @@ export type SetupOptions = {
 	authPath?: string;
 	configPath?: string;
 	// Injection points for tests. Defaults target a real readline interface,
-	// the real os.platform, and the real filesystem.
+	// the real os.platform, the real filesystem, and the real native store
+	// path on macOS.
 	createPrompt?: () => Interface;
 	platform?: () => NodeJS.Platform;
 	fileExists?: (path: string) => boolean;
