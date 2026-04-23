@@ -1,31 +1,50 @@
 # simplenote-mcp
 
-An MCP (Model Context Protocol) server that provides read access to your Simplenote data. Use it with any MCP-compatible AI tool to search and retrieve your notes.
+An MCP (Model Context Protocol) server that gives any MCP-compatible AI tool read access to your [Simplenote](https://simplenote.com/) data.
 
-On macOS it reads directly from the local Simplenote desktop app's Core Data store. On Windows and Linux it talks to the Simperium HTTP API after a one-time `simplenote-mcp login`.
+On macOS, it reads directly from the local Simplenote desktop app's Core Data store — fully offline, no auth. On Linux and Windows (and on macOS without the desktop app), it talks to the Simperium HTTP API after a one-time `simplenote-mcp login`.
+
+Works with Claude Desktop, Claude Code, Cursor, VS Code (Copilot), Zed, Cline, Windsurf, and anything else that speaks MCP.
+
+## Quick start
+
+For macOS users with the [Simplenote desktop app](https://simplenote.com/) already installed and synced — no login required, no env vars, just point your MCP client at it.
+
+**Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "simplenote": {
+      "command": "npx",
+      "args": ["-y", "simplenote-mcp"]
+    }
+  }
+}
+```
+
+Restart the client and ask it to list your tags. That's it.
+
+For Linux / Windows, or macOS without the desktop app, see [Authentication](#authentication) for the one-time login step, then apply the same config.
 
 ## Requirements
 
 - Node.js 22+
 - One of:
-  - **macOS:** [Simplenote](https://simplenote.com/) desktop app installed and synced (offline, no auth needed), **or**
-  - Any platform: a Simplenote account + the Simperium production app ID (see [Authentication](#authentication))
+  - **macOS:** the [Simplenote desktop app](https://simplenote.com/) installed and synced, **or**
+  - Any platform: a Simplenote account (you'll run `simplenote-mcp login` once)
 
-## Installation
+## Install
 
-```bash
-npm install github:Automattic/simplenote-mcp
-```
+Most users don't need to install anything manually — `npx -y simplenote-mcp` in the MCP config does it on first use.
 
-Or clone and install locally:
+If you prefer a global install (faster startup, no cold-cache download on first use):
 
 ```bash
-git clone https://github.com/Automattic/simplenote-mcp.git
-cd simplenote-mcp
-npm install
+npm install -g simplenote-mcp
 ```
 
-`npm install` runs `tsc` automatically (via the `prepare` script) and produces the `dist/` build.
+Then reference `simplenote-mcp` directly as the `command` in your MCP config.
 
 ## Authentication
 
@@ -34,10 +53,10 @@ Skip this section if you only intend to use the native macOS data source.
 ### One-time login
 
 ```bash
-node /path/to/simplenote-mcp/server.js login
+npx simplenote-mcp login
 ```
 
-Prompts for your Simplenote email, sends a magic-link email containing a short auth code, then prompts for the code. On success, the token is written with mode `0600` to:
+Prompts for your Simplenote email, sends a magic-link email containing a short auth code, then prompts for the code. On success, a token is written with mode `0600` to:
 
 | Platform | Path |
 |----------|------|
@@ -45,83 +64,104 @@ Prompts for your Simplenote email, sends a magic-link email containing a short a
 | Linux    | `$XDG_CONFIG_HOME/simplenote-mcp/auth.json` (default `~/.config/simplenote-mcp/auth.json`) |
 | Windows  | `%APPDATA%\simplenote-mcp\auth.json` |
 
-To remove the stored token: `node server.js logout`.
-
-### Simperium app ID
-
-The Simperium HTTP API requires the production Simplenote `app_id`. The default baked into this repo (`history-analyst-dad`) is the public **testing** app shipped in the open-source [`simplenote-macos`](https://github.com/Automattic/simplenote-macos) sources and **will not work** with tokens issued by `app.simplenote.com`. Provide the production value via env var:
+To remove the stored token:
 
 ```bash
-SIMPLENOTE_APP_ID=<production-app-id> node server.js
+npx simplenote-mcp logout
 ```
-
-The production ID is publicly visible on the wire from any official Simplenote client; it is not committed here so this repository remains safe to fork.
 
 ### Headless / CI
 
 Skip the file entirely by exporting the token directly:
 
 ```bash
-SIMPLENOTE_TOKEN=<token> SIMPLENOTE_APP_ID=<app-id> node server.js
+SIMPLENOTE_TOKEN=<token> npx simplenote-mcp
 ```
 
 The env var bypasses `auth.json`. Prefer it over a CLI flag — argv values appear in `ps` output and shell history.
 
 ### Token lifetime
 
-Magic-link tokens appear sticky per user (re-running `login` returns the same token until invalidated server-side). No expiry has been observed in normal use; treat any 401 from the Simperium API as "re-run `login`." There is no automatic refresh — magic-link auth requires user interaction. `/account/request-login` likely has anti-abuse throttling, so don't script repeated logins.
-
-## Provider Resolution
-
-The server picks a data source automatically:
-
-1. `--path <file>` — forces the native macOS provider against the given store file
-2. macOS, with the Simplenote app's default Core Data store present — native provider
-3. A token is available (file or `SIMPLENOTE_TOKEN`) — Simperium API provider
-4. Otherwise — exits with an actionable error message
-
-This means a macOS user with the desktop app installed gets fully offline access with no setup, while Windows/Linux users get the API path after `login`.
+Magic-link tokens appear sticky per user (re-running `login` returns the same token until invalidated server-side). No expiry has been observed in normal use; treat any 401 from the Simperium API as "re-run `login`." There is no automatic refresh — magic-link auth requires user interaction. The login endpoint is rate-limited (repeated failures lock the IP out for ~10 minutes), so don't script repeated attempts.
 
 ## Configuration
 
+All MCP clients converge on the same `{ command, args, env }` shape. The only things that differ between them are the config file location and the top-level key (`mcpServers` vs. `servers` vs. `context_servers`).
+
 ### Claude Desktop
 
-Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or the equivalent on your platform:
-
-**macOS, native data source (no auth required):**
+`~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows).
 
 ```json
 {
   "mcpServers": {
     "simplenote": {
-      "command": "node",
-      "args": ["/path/to/simplenote-mcp/server.js"]
+      "command": "npx",
+      "args": ["-y", "simplenote-mcp"]
     }
   }
 }
 ```
 
-**Any platform, Simperium API:**
+For the Simperium API path (Linux, Windows, or macOS without the desktop app), run `npx simplenote-mcp login` once in a terminal before starting the client.
+
+Restart Claude Desktop to pick up config changes. See [Windows notes](#windows-notes) below for Windows-specific quirks.
+
+### Claude Code
+
+The easy path is the CLI:
+
+```bash
+claude mcp add simplenote -- npx -y simplenote-mcp
+```
+
+Or edit `~/.claude.json` / project `.mcp.json` with the same JSON shape as Claude Desktop above.
+
+### Cursor
+
+`~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (per-project). Same JSON shape as Claude Desktop.
+
+### VS Code (GitHub Copilot)
+
+User config via **Command Palette → "MCP: Open User Configuration"**, or per-project `.vscode/mcp.json`. Note: VS Code uses `servers` at the top level, not `mcpServers`.
 
 ```json
 {
-  "mcpServers": {
+  "servers": {
     "simplenote": {
-      "command": "node",
-      "args": ["/path/to/simplenote-mcp/server.js"],
-      "env": {
-        "SIMPLENOTE_APP_ID": "<production-app-id>"
+      "command": "npx",
+      "args": ["-y", "simplenote-mcp"]
+    }
+  }
+}
+```
+
+### Zed
+
+In Zed's `settings.json`:
+
+```json
+{
+  "context_servers": {
+    "simplenote": {
+      "command": {
+        "path": "npx",
+        "args": ["-y", "simplenote-mcp"]
       }
     }
   }
 }
 ```
 
-Run `node /path/to/simplenote-mcp/server.js login` once before starting the MCP client.
+Zed uses a different schema — `context_servers` with a nested `command` object.
 
-### Claude Code
+### Cline
 
-Add the same `mcpServers` block to `~/.claude/settings.json`.
+Open the Cline MCP Servers panel → edit `cline_mcp_settings.json`. Same JSON shape as Claude Desktop (`mcpServers` top-level key).
+
+### Windsurf
+
+`~/.codeium/windsurf/mcp_config.json`. Same JSON shape as Claude Desktop.
 
 ### Custom store path (macOS)
 
@@ -137,9 +177,10 @@ Then pass `--path`:
 {
   "mcpServers": {
     "simplenote": {
-      "command": "node",
+      "command": "npx",
       "args": [
-        "/path/to/simplenote-mcp/server.js",
+        "-y",
+        "simplenote-mcp",
         "--path",
         "/path/to/Simplenote.storedata"
       ]
@@ -150,7 +191,18 @@ Then pass `--path`:
 
 `--path` always forces the native provider, even if a token is configured.
 
-## Available Tools
+## Provider resolution
+
+The server picks a data source automatically:
+
+1. `--path <file>` — forces the native macOS provider against the given store file
+2. macOS, with the Simplenote app's default Core Data store present — native provider
+3. A token is available (file or `SIMPLENOTE_TOKEN`) — Simperium API provider
+4. Otherwise — exits with an actionable error message
+
+This means a macOS user with the desktop app gets fully offline access with no setup, while Windows/Linux users get the API path after `login`.
+
+## Available tools
 
 ### list_tags
 
@@ -165,8 +217,8 @@ List all tags in your Simplenote account.
 List recent notes, optionally filtered by tag.
 
 **Parameters:**
-- `tag` (string, optional) - Filter by tag name
-- `limit` (number, optional, default: 20) - Max notes to return
+- `tag` (string, optional) — filter by tag name
+- `limit` (number, optional, default: 20, max: 100) — max notes to return
 
 **Returns:** Array of `{id, title, tags, pinned, modified}` sorted by pinned status then modification date
 
@@ -175,9 +227,9 @@ List recent notes, optionally filtered by tag.
 Search notes by content, title, or tags.
 
 **Parameters:**
-- `query` (string, required) - Search term (case-insensitive)
-- `limit` (number, optional, default: 10) - Max results
-- `include_deleted` (boolean, optional, default: false) - Include deleted notes
+- `query` (string, required) — search term (case-insensitive)
+- `limit` (number, optional, default: 10, max: 100) — max results
+- `include_deleted` (boolean, optional, default: false) — include deleted notes
 
 **Returns:** Array of `{id, title, tags, snippet, modified, deleted}`
 
@@ -186,14 +238,14 @@ Search notes by content, title, or tags.
 Get the full content of a specific note.
 
 **Parameters:**
-- `id` (string, required) - Note ID (simperiumkey)
-- `include_deleted` (boolean, optional, default: false) - Allow retrieving deleted notes
+- `id` (string, required) — note ID (simperiumkey)
+- `include_deleted` (boolean, optional, default: false) — allow retrieving deleted notes
 
 **Returns:** `{id, content, tags, pinned, markdown, deleted, created, modified}`
 
-## Example Usage
+## Example usage
 
-Once configured, you can ask Claude things like:
+Once configured, you can ask your AI client things like:
 
 - "List my Simplenote tags"
 - "Show my recent notes"
@@ -201,18 +253,72 @@ Once configured, you can ask Claude things like:
 - "Show notes tagged 'ideas'"
 - "Get the full content of note [id]"
 
-The server is read-only and does not modify your notes. Native macOS data is cached in memory and refreshed when the store file changes; Simperium API responses are cached for 60 seconds (with stale-cache fallback if the API is briefly unreachable).
+The server is read-only and does not modify your notes. Native macOS data is cached in memory and refreshed when the store file changes; Simperium API responses are cached for 60 seconds, with stale-cache fallback if the API is briefly unreachable.
+
+## Windows notes
+
+A few Windows-specific quirks worth knowing:
+
+- **Wrap `npx` in `cmd /c`** for Claude Desktop. Its child-process launcher doesn't always find `npx.cmd` on PATH otherwise:
+
+  ```json
+  {
+    "mcpServers": {
+      "simplenote": {
+        "command": "cmd",
+        "args": ["/c", "npx", "-y", "simplenote-mcp"]
+      }
+    }
+  }
+  ```
+
+- **Claude Desktop `%APPDATA%` expansion** can silently fail in some versions. If the server can't find its config dir, set `APPDATA` explicitly in the `env` block:
+
+  ```json
+  "env": {
+    "APPDATA": "C:\\Users\\<you>\\AppData\\Roaming"
+  }
+  ```
+
+- **Paths with backslashes** in JSON must be escaped (`"C:\\Users\\..."`). Forward slashes also work (`"C:/Users/..."`) and are less error-prone.
+
+## Troubleshooting
+
+**"Not logged in. Run `simplenote-mcp login`..."**
+You're on the Simperium API path without a token. Run `npx simplenote-mcp login` in a terminal.
+
+**"Token rejected."**
+The token may have been invalidated server-side. Re-run `npx simplenote-mcp login`.
+
+**Tools list empty / "Simplenote store not found"**
+On macOS the default path is `~/Library/Group Containers/PZYM8XX95Q.com.automattic.SimplenoteMac/Data/Simplenote.storedata`. If your store lives elsewhere, pass `--path`. If you don't have the desktop app, switch to the API path with `simplenote-mcp login`.
+
+**First tool call is very slow**
+`npx -y` downloads the package on first use. On slow networks this can exceed the MCP client's startup timeout (~10s). Either wait for it to warm up, or install globally once: `npm install -g simplenote-mcp` and change `"command": "npx"` to `"command": "simplenote-mcp"` (drop the args).
+
+**"command not found: npx" / "spawn npx ENOENT" on Windows**
+See the `cmd /c` wrapping in [Windows notes](#windows-notes).
+
+**Login emails aren't arriving**
+Check spam. The login endpoint is rate-limited — multiple failures in quick succession will lock the IP out for ~10 minutes. Wait, then try again.
+
+**Everything looks fine but data seems stale**
+Simperium responses are cached for 60 seconds; the native macOS provider refreshes when the store file's mtime changes. Wait a minute, or restart the MCP client to force a re-fetch.
 
 ## Development
 
-Source lives in `src/`, compiled output in `dist/`. Useful scripts:
+Source lives in `src/`, compiled output in `dist/`.
 
 ```bash
-npm run build       # tsc
-npm run typecheck   # tsc --noEmit
+git clone https://github.com/Automattic/simplenote-mcp.git
+cd simplenote-mcp
+npm install          # installs deps + builds via `prepare`
+npm test             # runs the test suite
+npm run typecheck    # tsc --noEmit
+npm run build        # tsc + chmod +x on the bin
 ```
 
-`server.js` at the repo root is a thin shim that imports `dist/server.js`, kept stable so existing client configs keep working.
+`server.js` at the repo root is a thin shim that imports `dist/server.js`, kept stable for users who wired up configs pointing at the local clone before the npm package existed.
 
 ## License
 
