@@ -2,7 +2,11 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { extractTitle, type Provider } from './providers/normalize.js';
+import {
+	extractTitle,
+	formatNoteForDisplay,
+	type Provider,
+} from './providers/normalize.js';
 import { resolveProvider } from './providers/resolver.js';
 
 // CLI subcommand dispatch must run before MCP/store setup.
@@ -32,6 +36,17 @@ const READ_ONLY_ANNOTATIONS = {
 	idempotentHint: true,
 	openWorldHint: true,
 } as const;
+
+// Write operations modify remote state.
+const WRITE_ANNOTATIONS = {
+	readOnlyHint: false,
+	destructiveHint: false,
+	idempotentHint: false,
+	openWorldHint: true,
+} as const;
+
+// Gate write operations behind an explicit opt-in.
+const ALLOW_WRITE = process.env.SIMPLENOTE_ALLOW_WRITE === '1';
 
 server.registerTool(
 	'list_tags',
@@ -212,6 +227,201 @@ server.registerTool(
 		}
 	},
 );
+
+// Register write tools only when write is opted in AND the resolved provider
+// advertises the capability. The native macOS provider does not currently
+// implement create/update, so on macOS with the desktop app installed these
+// tools will not be advertised even if SIMPLENOTE_ALLOW_WRITE=1.
+if (ALLOW_WRITE && !provider.createNote && !provider.updateNote) {
+	console.error(
+		`[simplenote-mcp] SIMPLENOTE_ALLOW_WRITE=1 set, but the active provider (${provider.name}) does not support write operations. Write tools will not be registered.`,
+	);
+}
+
+if (ALLOW_WRITE && provider.createNote) {
+	const createNote = provider.createNote.bind(provider);
+	server.registerTool(
+		'create_note',
+		{
+			title: 'Create Note',
+			description:
+				'Create a new note in Simplenote. Requires SIMPLENOTE_ALLOW_WRITE=1 and a provider that supports writes (Simperium API).',
+			inputSchema: {
+				content: z.string().describe('Note content (first line becomes title)'),
+				tags: z
+					.array(z.string())
+					.optional()
+					.describe('Tags to attach to the note'),
+				markdown: z
+					.boolean()
+					.optional()
+					.describe('Enable markdown rendering (default: true)'),
+				pinned: z
+					.boolean()
+					.optional()
+					.describe('Pin note to top of list (default: false)'),
+			},
+			annotations: WRITE_ANNOTATIONS,
+		},
+		async ({ content, tags, markdown, pinned }) => {
+			try {
+				const result = await createNote({ content, tags, markdown, pinned });
+				return {
+					content: [
+						{
+							type: 'text',
+							text: JSON.stringify(
+								{
+									success: true,
+									id: result.id,
+									version: result.version,
+									title: extractTitle(content),
+								},
+								null,
+								2,
+							),
+						},
+					],
+				};
+			} catch (err) {
+				return toolError(err);
+			}
+		},
+	);
+}
+
+if (ALLOW_WRITE && provider.updateNote) {
+	const updateNote = provider.updateNote.bind(provider);
+	server.registerTool(
+		'update_note',
+		{
+			title: 'Update Note',
+			description:
+				'Update an existing note in Simplenote. ' +
+				'IMPORTANT: When changing only part of the content (e.g. fixing a typo, adding a section), call get_note first — `content` replaces the entire note, so a partial value will erase the rest. ' +
+				'Tags, when provided, also replace the existing list in full. ' +
+				'Requires SIMPLENOTE_ALLOW_WRITE=1 and a provider that supports writes (Simperium API).',
+			inputSchema: {
+				id: z.string().describe('Note ID to update'),
+				content: z.string().optional().describe('New note content'),
+				tags: z
+					.array(z.string())
+					.optional()
+					.describe('Replace tags (provide full list)'),
+				markdown: z
+					.boolean()
+					.optional()
+					.describe('Enable/disable markdown rendering'),
+				pinned: z.boolean().optional().describe('Pin/unpin note'),
+			},
+			annotations: WRITE_ANNOTATIONS,
+		},
+		async ({ id, content, tags, markdown, pinned }) => {
+			if (
+				content === undefined &&
+				tags === undefined &&
+				markdown === undefined &&
+				pinned === undefined
+			) {
+				return {
+					content: [
+						{
+							type: 'text',
+							text: 'Error: At least one field (content, tags, markdown, pinned) must be provided.',
+						},
+					],
+					isError: true,
+				};
+			}
+
+			try {
+				const result = await updateNote({ id, content, tags, markdown, pinned });
+				return {
+					content: [
+						{
+							type: 'text',
+							text: JSON.stringify(
+								{
+									success: true,
+									id: result.id,
+									version: result.version,
+								},
+								null,
+								2,
+							),
+						},
+					],
+				};
+			} catch (err) {
+				return toolError(err);
+			}
+		},
+	);
+
+	// Prompt is gated alongside the update_note tool so clients without write
+	// access don't see a workflow they can't complete.
+	server.registerPrompt(
+		'update-note-workflow',
+		{
+			title: 'Update Note Workflow',
+			description:
+				'Guided workflow to safely update a note by first reviewing its current content',
+			argsSchema: {
+				noteId: z.string().describe('The note ID to update'),
+			},
+		},
+		async ({ noteId }) => {
+			try {
+				const { notes } = await provider.loadStore();
+				const note = notes.find((n) => n.id === noteId);
+
+				if (!note) {
+					return {
+						messages: [
+							{
+								role: 'user' as const,
+								content: {
+									type: 'text' as const,
+									text: `Note with ID "${noteId}" was not found. Please check the ID and try again.`,
+								},
+							},
+						],
+					};
+				}
+
+				return {
+					messages: [
+						{
+							role: 'user' as const,
+							content: {
+								type: 'text' as const,
+								text:
+									`I want to update this note. Here's the current content:\n\n` +
+									`${formatNoteForDisplay(note)}\n\n` +
+									`---\n\n` +
+									`What changes would you like to make to this note?`,
+							},
+						},
+					],
+					description: `Update workflow for: ${extractTitle(note.content)}`,
+				};
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return {
+					messages: [
+						{
+							role: 'user' as const,
+							content: {
+								type: 'text' as const,
+								text: `Error loading note: ${message}`,
+							},
+						},
+					],
+				};
+			}
+		},
+	);
+}
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
