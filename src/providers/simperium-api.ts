@@ -117,14 +117,11 @@ class SimperiumApiProvider implements Provider {
 		const noteId = randomUUID();
 		const nowUnix = Math.floor(Date.now() / 1000);
 
-		const systemTags: string[] = [];
-		if (input.markdown !== false) {
-			// Default to markdown enabled unless explicitly set to false
-			systemTags.push('markdown');
-		}
-		if (input.pinned) {
-			systemTags.push('pinned');
-		}
+		// Defaults: markdown on, pinned off. Caller can override either.
+		const systemTags = mergeSystemTags([], {
+			markdown: input.markdown ?? true,
+			pinned: input.pinned ?? false,
+		});
 
 		const noteData = {
 			content: input.content,
@@ -162,19 +159,15 @@ class SimperiumApiProvider implements Provider {
 		const existingSystemTags = Array.isArray(existing.systemTags)
 			? existing.systemTags.filter((t): t is string => typeof t === 'string')
 			: [];
-		const systemTags = new Set(existingSystemTags);
-		if (input.markdown !== undefined) {
-			if (input.markdown) systemTags.add('markdown');
-			else systemTags.delete('markdown');
-		}
-		if (input.pinned !== undefined) {
-			if (input.pinned) systemTags.add('pinned');
-			else systemTags.delete('pinned');
-		}
+		// undefined toggles preserve existing flags; explicit true/false sets them.
+		const systemTags = mergeSystemTags(existingSystemTags, {
+			markdown: input.markdown,
+			pinned: input.pinned,
+		});
 
 		const noteData: Record<string, unknown> = {
 			...existing,
-			systemTags: Array.from(systemTags),
+			systemTags,
 			modificationDate: Math.floor(Date.now() / 1000),
 		};
 		if (input.content !== undefined) noteData.content = input.content;
@@ -189,22 +182,36 @@ class SimperiumApiProvider implements Provider {
 	}
 }
 
-async function fetchRawNote(
-	noteId: string,
-	token: string,
-): Promise<Record<string, unknown>> {
-	const url = `${API_BASE}/${APP_ID}/note/i/${noteId}`;
+// Centralizes auth header, timeout, and the universal status mappings shared
+// by every Simperium endpoint we touch. Callers only deal with the body and
+// any endpoint-specific status codes (e.g. 404 for single-note fetch).
+async function simperiumRequest(opts: {
+	method: 'GET' | 'POST';
+	path: string;
+	token: string;
+	body?: unknown;
+	context: string;
+	passthroughStatus?: readonly number[];
+}): Promise<Response> {
+	const headers: Record<string, string> = { 'X-Simperium-Token': opts.token };
+	let payload: string | undefined;
+	if (opts.body !== undefined) {
+		headers['Content-Type'] = 'application/json';
+		payload = JSON.stringify(opts.body);
+	}
 
 	let res: Response;
 	try {
-		res = await fetch(url, {
-			headers: { 'X-Simperium-Token': token },
+		res = await fetch(`${API_BASE}/${APP_ID}${opts.path}`, {
+			method: opts.method,
+			headers,
+			body: payload,
 			signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
 		});
 	} catch (err) {
 		throw new ApiError(
 			'network_error',
-			`Network error fetching note: ${(err as Error).message}`,
+			`Network error ${opts.context}: ${(err as Error).message}`,
 		);
 	}
 
@@ -215,15 +222,29 @@ async function fetchRawNote(
 			401,
 		);
 	}
-	if (res.status === 404) {
-		throw new ApiError('not_found', `Note not found: ${noteId}`, 404);
-	}
-	if (!res.ok) {
+	if (!res.ok && !opts.passthroughStatus?.includes(res.status)) {
 		throw new ApiError(
 			'request_failed',
-			`Simperium API error fetching note (HTTP ${res.status}).`,
+			`Simperium API error ${opts.context} (HTTP ${res.status}).`,
 			res.status,
 		);
+	}
+	return res;
+}
+
+async function fetchRawNote(
+	noteId: string,
+	token: string,
+): Promise<Record<string, unknown>> {
+	const res = await simperiumRequest({
+		method: 'GET',
+		path: `/note/i/${noteId}`,
+		token,
+		context: 'fetching note',
+		passthroughStatus: [404],
+	});
+	if (res.status === 404) {
+		throw new ApiError('not_found', `Note not found: ${noteId}`, 404);
 	}
 
 	let body: unknown;
@@ -232,14 +253,12 @@ async function fetchRawNote(
 	} catch {
 		throw new ApiError('invalid_response', 'Simperium note returned invalid JSON.');
 	}
-
 	if (!body || typeof body !== 'object') {
 		throw new ApiError(
 			'invalid_response',
 			'Simperium note response was not a JSON object.',
 		);
 	}
-
 	return body as Record<string, unknown>;
 }
 
@@ -249,56 +268,23 @@ async function postNote(
 	token: string,
 	operation: 'create' | 'update' = 'create',
 ): Promise<NoteCreateResult> {
-	// Simperium API: POST /1/{app_id}/{bucket}/i/{object_id}
-	// Returns the created version number
-	const url = `${API_BASE}/${APP_ID}/note/i/${noteId}`;
-	const opLabel = operation === 'update' ? 'updating' : 'creating';
+	// Simperium returns the new version number as plain text in the body.
+	const res = await simperiumRequest({
+		method: 'POST',
+		path: `/note/i/${noteId}`,
+		token,
+		body: data,
+		context: operation === 'update' ? 'updating note' : 'creating note',
+	});
 
-	let res: Response;
-	try {
-		res = await fetch(url, {
-			method: 'POST',
-			headers: {
-				'X-Simperium-Token': token,
-				'Content-Type': 'application/json',
-			},
-			body: JSON.stringify(data),
-			signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-		});
-	} catch (err) {
-		throw new ApiError(
-			'network_error',
-			`Network error ${opLabel} note: ${(err as Error).message}`,
-		);
-	}
-
-	if (res.status === 401) {
-		throw new ApiError(
-			'unauthorized',
-			'Token rejected. Run `simplenote-mcp login` to re-authenticate.',
-			401,
-		);
-	}
-	if (!res.ok) {
-		throw new ApiError(
-			'request_failed',
-			`Simperium API error ${opLabel} note (HTTP ${res.status}).`,
-			res.status,
-		);
-	}
-
-	// Simperium returns the version number as plain text
 	let version = 1;
 	try {
 		const text = await res.text();
 		const parsed = Number.parseInt(text, 10);
-		if (Number.isFinite(parsed)) {
-			version = parsed;
-		}
+		if (Number.isFinite(parsed)) version = parsed;
 	} catch {
-		// Use default version 1 if parsing fails
+		// fall through with default version 1
 	}
-
 	return { id: noteId, version };
 }
 
@@ -316,35 +302,13 @@ async function fetchAllIndex(
 	while (true) {
 		const params = new URLSearchParams({ data: 'true' });
 		if (mark) params.set('mark', mark);
-		const url = `${API_BASE}/${APP_ID}/${bucket}/index?${params}`;
 
-		let res: Response;
-		try {
-			res = await fetch(url, {
-				headers: { 'X-Simperium-Token': token },
-				signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-			});
-		} catch (err) {
-			throw new ApiError(
-				'network_error',
-				`Network error contacting Simperium: ${(err as Error).message}`,
-			);
-		}
-
-		if (res.status === 401) {
-			throw new ApiError(
-				'unauthorized',
-				'Token rejected. Run `simplenote-mcp login` to re-authenticate.',
-				401,
-			);
-		}
-		if (!res.ok) {
-			throw new ApiError(
-				'request_failed',
-				`Simperium API error fetching ${bucket} index (HTTP ${res.status}).`,
-				res.status,
-			);
-		}
+		const res = await simperiumRequest({
+			method: 'GET',
+			path: `/${bucket}/index?${params}`,
+			token,
+			context: `fetching ${bucket} index`,
+		});
 
 		let body: unknown;
 		try {
@@ -418,6 +382,19 @@ function normalizeTag(entry: IndexEntry): NormalizedTag | null {
 	}
 
 	return { name, index };
+}
+
+function mergeSystemTags(
+	existing: readonly string[],
+	toggles: { markdown?: boolean; pinned?: boolean },
+): string[] {
+	const tags = new Set(existing);
+	for (const [name, value] of Object.entries(toggles)) {
+		if (value === undefined) continue;
+		if (value) tags.add(name);
+		else tags.delete(name);
+	}
+	return Array.from(tags);
 }
 
 function toBool(value: unknown): boolean {
