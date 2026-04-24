@@ -445,7 +445,7 @@ function isUpdateNoOp(
 		const existingTags = Array.isArray(existing.tags)
 			? existing.tags.filter((t): t is string => typeof t === 'string')
 			: [];
-		if (!stringArraysEqual(input.tags, existingTags)) return false;
+		if (!stringArraysSetEqual(input.tags, existingTags)) return false;
 	}
 	if (
 		input.markdown !== undefined &&
@@ -462,12 +462,12 @@ function isUpdateNoOp(
 	return true;
 }
 
-function stringArraysEqual(a: readonly string[], b: readonly string[]): boolean {
+// Tags are semantically a set in Simplenote, so ['a', 'b'] and ['b', 'a'] are
+// equivalent for the purposes of no-op detection.
+function stringArraysSetEqual(a: readonly string[], b: readonly string[]): boolean {
 	if (a.length !== b.length) return false;
-	for (let i = 0; i < a.length; i++) {
-		if (a[i] !== b[i]) return false;
-	}
-	return true;
+	const set = new Set(a);
+	return b.every((t) => set.has(t));
 }
 
 function toBool(value: unknown): boolean {

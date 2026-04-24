@@ -781,6 +781,33 @@ describe('updateNote', () => {
 		assert.equal(result.version, 3);
 	});
 
+	it('skips POST when tags match existing tags in different order', async () => {
+		const provider = createApiProvider();
+		let postCalled = false;
+
+		mockFetch(async (url: string, opts?: RequestInit) => {
+			if (isRawNoteGet(url, opts?.method)) {
+				return rawNoteResponse(
+					{ content: 'Content', tags: ['a', 'b', 'c'] },
+					{ version: 8 },
+				);
+			}
+			if (isNotePost(opts?.method)) {
+				postCalled = true;
+				return new Response('99', { status: 200 });
+			}
+			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
+		});
+
+		const result = await provider.updateNote!({
+			id: 'note-1',
+			tags: ['c', 'a', 'b'],
+		});
+
+		assert.equal(postCalled, false, 'Reordered but equal tag set should be a no-op');
+		assert.equal(result.version, 8);
+	});
+
 	it('skips POST when markdown flag matches existing systemTags', async () => {
 		const provider = createApiProvider();
 		let postCalled = false;
