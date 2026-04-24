@@ -1,24 +1,15 @@
-import { afterEach, beforeEach, describe, it } from 'node:test';
+import { describe, it } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { chmod, readFile, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ConfigError, loadConfig, saveConfig } from '../src/providers/config.ts';
+import { useTmpDir } from './helpers.ts';
 
 describe('loadConfig', () => {
-	let dir: string;
-	let configPath: string;
-
-	beforeEach(async () => {
-		dir = await mkdtemp(join(tmpdir(), 'simplenote-mcp-config-test-'));
-		configPath = join(dir, 'config.json');
-	});
-
-	afterEach(async () => {
-		await rm(dir, { recursive: true, force: true });
-	});
+	const tmp = useTmpDir('simplenote-mcp-config-test-');
 
 	it('returns Config from valid JSON (source=api)', async () => {
+		const configPath = tmp.path('config.json');
 		await writeFile(
 			configPath,
 			JSON.stringify({ source: 'api', writeMode: true }),
@@ -28,6 +19,7 @@ describe('loadConfig', () => {
 	});
 
 	it('returns Config from valid JSON (source=local)', async () => {
+		const configPath = tmp.path('config.json');
 		await writeFile(
 			configPath,
 			JSON.stringify({ source: 'local', writeMode: false }),
@@ -38,12 +30,13 @@ describe('loadConfig', () => {
 
 	it("throws ConfigError('missing') when file is absent", async () => {
 		await assert.rejects(
-			() => loadConfig({ configPath }),
+			() => loadConfig({ configPath: tmp.path('config.json') }),
 			(err: unknown) => err instanceof ConfigError && err.code === 'missing',
 		);
 	});
 
 	it("throws ConfigError('invalid') on malformed JSON", async () => {
+		const configPath = tmp.path('config.json');
 		await writeFile(configPath, 'not json');
 		await assert.rejects(
 			() => loadConfig({ configPath }),
@@ -52,6 +45,7 @@ describe('loadConfig', () => {
 	});
 
 	it("throws ConfigError('invalid') on non-object JSON", async () => {
+		const configPath = tmp.path('config.json');
 		await writeFile(configPath, JSON.stringify('scalar'));
 		await assert.rejects(
 			() => loadConfig({ configPath }),
@@ -60,6 +54,7 @@ describe('loadConfig', () => {
 	});
 
 	it("throws ConfigError('invalid') when writeMode is missing", async () => {
+		const configPath = tmp.path('config.json');
 		await writeFile(configPath, JSON.stringify({ source: 'api' }));
 		await assert.rejects(
 			() => loadConfig({ configPath }),
@@ -68,6 +63,7 @@ describe('loadConfig', () => {
 	});
 
 	it("throws ConfigError('invalid') when writeMode is non-boolean", async () => {
+		const configPath = tmp.path('config.json');
 		await writeFile(
 			configPath,
 			JSON.stringify({ source: 'api', writeMode: 'yes' }),
@@ -79,6 +75,7 @@ describe('loadConfig', () => {
 	});
 
 	it("throws ConfigError('invalid') when source is missing", async () => {
+		const configPath = tmp.path('config.json');
 		await writeFile(configPath, JSON.stringify({ writeMode: false }));
 		await assert.rejects(
 			() => loadConfig({ configPath }),
@@ -87,6 +84,7 @@ describe('loadConfig', () => {
 	});
 
 	it("throws ConfigError('invalid') when source is not 'local' or 'api'", async () => {
+		const configPath = tmp.path('config.json');
 		await writeFile(
 			configPath,
 			JSON.stringify({ source: 'other', writeMode: false }),
@@ -99,32 +97,24 @@ describe('loadConfig', () => {
 });
 
 describe('saveConfig', () => {
-	let dir: string;
-	let configPath: string;
-
-	beforeEach(async () => {
-		dir = await mkdtemp(join(tmpdir(), 'simplenote-mcp-config-test-'));
-		configPath = join(dir, 'config.json');
-	});
-
-	afterEach(async () => {
-		await rm(dir, { recursive: true, force: true });
-	});
+	const tmp = useTmpDir('simplenote-mcp-config-test-');
 
 	it('writes the config as JSON', async () => {
+		const configPath = tmp.path('config.json');
 		await saveConfig({ source: 'api', writeMode: true }, { configPath });
 		const raw = await readFile(configPath, 'utf-8');
 		assert.deepEqual(JSON.parse(raw), { source: 'api', writeMode: true });
 	});
 
 	it('persists source=local', async () => {
+		const configPath = tmp.path('config.json');
 		await saveConfig({ source: 'local', writeMode: false }, { configPath });
 		const raw = await readFile(configPath, 'utf-8');
 		assert.deepEqual(JSON.parse(raw), { source: 'local', writeMode: false });
 	});
 
 	it('creates the parent directory when missing', async () => {
-		const nested = join(dir, 'a', 'b', 'c', 'config.json');
+		const nested = join(tmp.dir, 'a', 'b', 'c', 'config.json');
 		await saveConfig(
 			{ source: 'api', writeMode: false },
 			{ configPath: nested },
@@ -138,12 +128,14 @@ describe('saveConfig', () => {
 			t.skip('POSIX permissions are not enforced on Windows');
 			return;
 		}
+		const configPath = tmp.path('config.json');
 		await saveConfig({ source: 'api', writeMode: true }, { configPath });
 		const st = await stat(configPath);
 		assert.equal(st.mode & 0o777, 0o644);
 	});
 
 	it('overwrites an existing file', async () => {
+		const configPath = tmp.path('config.json');
 		await saveConfig({ source: 'api', writeMode: true }, { configPath });
 		await saveConfig({ source: 'api', writeMode: false }, { configPath });
 		const out = await loadConfig({ configPath });
@@ -155,6 +147,7 @@ describe('saveConfig', () => {
 			t.skip('POSIX permissions are not enforced on Windows');
 			return;
 		}
+		const configPath = tmp.path('config.json');
 		await saveConfig({ source: 'api', writeMode: true }, { configPath });
 		await chmod(configPath, 0o666);
 		await saveConfig({ source: 'api', writeMode: true }, { configPath });
