@@ -318,6 +318,41 @@ npm run typecheck    # tsc --noEmit
 npm run build        # tsc + chmod +x on the bin
 ```
 
+### Testing locally with MCP Inspector
+
+[MCP Inspector](https://github.com/modelcontextprotocol/inspector) gives you a browser UI for an MCP server — it lists the tools, prompts, and resources the server exposes, lets you call them with arbitrary arguments, and prints the raw JSON-RPC on both sides. Useful when you want to exercise a code change without wiring the server into a real client.
+
+**Run against the local build:**
+
+```bash
+npm run build
+npx @modelcontextprotocol/inspector node dist/server.js
+```
+
+Open the URL it prints and click **Connect**.
+
+**Run from source without rebuilding** (fastest iteration — uses `tsx`):
+
+```bash
+npx @modelcontextprotocol/inspector npx tsx src/server.ts
+```
+
+**Test the published npm package** (exactly what users get):
+
+```bash
+npx @modelcontextprotocol/inspector npx -y simplenote-mcp
+```
+
+**Pick a provider explicitly:**
+
+- Force the native macOS provider against a custom store:
+  ```bash
+  npx @modelcontextprotocol/inspector node dist/server.js --path /path/to/Simplenote.storedata
+  ```
+- Force the Simperium API provider — export `SIMPLENOTE_TOKEN` in the same shell before launching Inspector, or paste it into the Inspector UI's **Environment Variables** panel.
+
+Inspector spawns the server as a subprocess over stdio, so anything that works in a real MCP client config works here — including `--path`, env vars, and alternate Node binaries.
+
 `server.js` at the repo root is a thin shim that imports `dist/server.js`, kept stable for users who wired up configs pointing at the local clone before the npm package existed.
 
 ## License
