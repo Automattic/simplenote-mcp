@@ -345,11 +345,11 @@ npx @modelcontextprotocol/inspector npx -y simplenote-mcp
 
 **Pick a provider explicitly:**
 
-- Force the native macOS provider against a custom store:
+- Force the native macOS provider against a custom store (overrides config):
   ```bash
   npx @modelcontextprotocol/inspector node dist/server.js --path /path/to/Simplenote.storedata
   ```
-- Force the Simperium API provider — export `SIMPLENOTE_TOKEN` in the same shell before launching Inspector, or paste it into the Inspector UI's **Environment Variables** panel.
+- Use the Simperium API provider — requires `simplenote-mcp setup` to have been run with API mode selected first, which writes a config with `source: 'api'` and an `auth.json` token. Inspector then picks the API provider automatically. To use a different token for the session, export `SIMPLENOTE_TOKEN` before launching Inspector (overrides `auth.json`), or paste it into the Inspector UI's **Environment Variables** panel.
 
 Inspector spawns the server as a subprocess over stdio, so anything that works in a real MCP client config works here — including `--path`, env vars, and alternate Node binaries.
 
