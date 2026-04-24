@@ -25,7 +25,9 @@ export type ApiErrorCode =
 	| 'request_failed'
 	| 'network_error'
 	| 'invalid_response'
-	| 'not_found';
+	| 'not_found'
+	| 'note_in_trash'
+	| 'empty_content';
 
 export class ApiError extends Error {
 	readonly code: ApiErrorCode;
@@ -143,6 +145,13 @@ class SimperiumApiProvider implements Provider {
 	}
 
 	async updateNote(input: NoteUpdateInput): Promise<NoteUpdateResult> {
+		if (input.content !== undefined && input.content.trim().length === 0) {
+			throw new ApiError(
+				'empty_content',
+				'Refusing to replace note content with blank text. Use `trash_note` if you want to remove this note.',
+			);
+		}
+
 		const auth = await loadToken();
 		if (!auth) {
 			throw new ApiError(
@@ -154,11 +163,28 @@ class SimperiumApiProvider implements Provider {
 		// Fetch the raw remote record so we preserve fields we don't model in
 		// NormalizedNote (publishURL, shareURL, unknown systemTags, etc.) and
 		// avoid clobbering them on write. Always fresh — bypasses the 60s cache.
-		const existing = await fetchRawNote(input.id, auth.token);
+		const { data: existing, version: existingVersion } = await fetchRawNote(
+			input.id,
+			auth.token,
+		);
+
+		if (toBool(existing.deleted)) {
+			throw new ApiError(
+				'note_in_trash',
+				'Note is in the trash and cannot be updated. Restore it in the Simplenote app to edit.',
+			);
+		}
 
 		const existingSystemTags = Array.isArray(existing.systemTags)
 			? existing.systemTags.filter((t): t is string => typeof t === 'string')
 			: [];
+
+		// Skip the POST entirely when every provided field already matches
+		// existing state. Avoids version churn and wasted writes from retry loops.
+		if (isUpdateNoOp(input, existing, existingSystemTags)) {
+			return { id: input.id, version: existingVersion };
+		}
+
 		// undefined toggles preserve existing flags; explicit true/false sets them.
 		const systemTags = mergeSystemTags(existingSystemTags, {
 			markdown: input.markdown,
@@ -235,7 +261,7 @@ async function simperiumRequest(opts: {
 async function fetchRawNote(
 	noteId: string,
 	token: string,
-): Promise<Record<string, unknown>> {
+): Promise<{ data: Record<string, unknown>; version: number }> {
 	// Encode the id so a value like `../tag/i/x` can't be normalized away by
 	// the URL parser and redirected to a different bucket.
 	const res = await simperiumRequest({
@@ -249,6 +275,10 @@ async function fetchRawNote(
 		throw new ApiError('not_found', `Note not found: ${noteId}`, 404);
 	}
 
+	const versionHeader = res.headers.get('X-Simperium-Version');
+	const parsedVersion = versionHeader ? Number.parseInt(versionHeader, 10) : 0;
+	const version = Number.isFinite(parsedVersion) ? parsedVersion : 0;
+
 	let body: unknown;
 	try {
 		body = await res.json();
@@ -261,7 +291,7 @@ async function fetchRawNote(
 			'Simperium note response was not a JSON object.',
 		);
 	}
-	return body as Record<string, unknown>;
+	return { data: body as Record<string, unknown>, version };
 }
 
 async function postNote(
@@ -401,6 +431,43 @@ function mergeSystemTags(
 		else tags.delete(name);
 	}
 	return Array.from(tags);
+}
+
+function isUpdateNoOp(
+	input: NoteUpdateInput,
+	existing: Record<string, unknown>,
+	existingSystemTags: readonly string[],
+): boolean {
+	if (input.content !== undefined && input.content !== existing.content) {
+		return false;
+	}
+	if (input.tags !== undefined) {
+		const existingTags = Array.isArray(existing.tags)
+			? existing.tags.filter((t): t is string => typeof t === 'string')
+			: [];
+		if (!stringArraysEqual(input.tags, existingTags)) return false;
+	}
+	if (
+		input.markdown !== undefined &&
+		input.markdown !== existingSystemTags.includes('markdown')
+	) {
+		return false;
+	}
+	if (
+		input.pinned !== undefined &&
+		input.pinned !== existingSystemTags.includes('pinned')
+	) {
+		return false;
+	}
+	return true;
+}
+
+function stringArraysEqual(a: readonly string[], b: readonly string[]): boolean {
+	if (a.length !== b.length) return false;
+	for (let i = 0; i < a.length; i++) {
+		if (a[i] !== b[i]) return false;
+	}
+	return true;
 }
 
 function toBool(value: unknown): boolean {
