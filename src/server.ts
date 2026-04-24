@@ -440,42 +440,11 @@ if (provider.trashNote) {
 		},
 		async ({ id }) => {
 			try {
-				// Pre-check from cache so the caller gets a specific message for
-				// "not found" vs "already in trash" without making a wasted POST.
-				// The provider also fetches fresh on the happy path, which catches
-				// races where another client trashed the note in the meantime.
-				const { notes } = await provider.loadStore();
-				const existing = notes.find((n) => n.id === id);
-				if (!existing) {
-					return {
-						content: [{ type: 'text', text: 'Note not found' }],
-						isError: true,
-					};
-				}
-				if (existing.deleted) {
-					// Omit trashed_at: `modified` is just last-modified, which
-					// can drift from the actual trash event if the note was
-					// edited while in trash. Simperium doesn't track those
-					// separately.
-					return {
-						content: [
-							{
-								type: 'text',
-								text: JSON.stringify(
-									{
-										success: true,
-										id: existing.id,
-										title: extractTitle(existing.content),
-										message: 'Note was already in trash',
-									},
-									null,
-									2,
-								),
-							},
-						],
-					};
-				}
-
+				// Source of truth is the provider, which does a fresh GET — a
+				// cached pre-check here could lie in either direction (claim a
+				// restored-by-another-client note is still in trash, or claim a
+				// just-created note doesn't exist). 404s from the GET surface
+				// as ApiError('not_found') via toolError.
 				const trashed = await trashNote(id);
 				return {
 					content: [
