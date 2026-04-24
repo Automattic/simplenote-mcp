@@ -463,11 +463,16 @@ function isUpdateNoOp(
 }
 
 // Tags are semantically a set in Simplenote, so ['a', 'b'] and ['b', 'a'] are
-// equivalent for the purposes of no-op detection.
+// equivalent for the purposes of no-op detection. Compare via set sizes to
+// handle duplicate entries correctly on either side.
 function stringArraysSetEqual(a: readonly string[], b: readonly string[]): boolean {
-	if (a.length !== b.length) return false;
-	const set = new Set(a);
-	return b.every((t) => set.has(t));
+	const setA = new Set(a);
+	const setB = new Set(b);
+	if (setA.size !== setB.size) return false;
+	for (const t of setA) {
+		if (!setB.has(t)) return false;
+	}
+	return true;
 }
 
 function toBool(value: unknown): boolean {

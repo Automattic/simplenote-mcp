@@ -781,6 +781,31 @@ describe('updateNote', () => {
 		assert.equal(result.version, 3);
 	});
 
+	it('POSTs when input and existing tag arrays have equal length but different sets', async () => {
+		const provider = createApiProvider();
+		let postCalled = false;
+
+		// Existing has a duplicate; naive "every input element is in existing"
+		// would incorrectly treat these as equal.
+		mockFetch(async (url: string, opts?: RequestInit) => {
+			if (isRawNoteGet(url, opts?.method)) {
+				return rawNoteResponse(
+					{ content: 'Content', tags: ['a', 'a'] },
+					{ version: 2 },
+				);
+			}
+			if (isNotePost(opts?.method)) {
+				postCalled = true;
+				return new Response('3', { status: 200 });
+			}
+			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
+		});
+
+		await provider.updateNote!({ id: 'note-1', tags: ['a', 'b'] });
+
+		assert.equal(postCalled, true, 'Different tag sets should POST even at equal array length');
+	});
+
 	it('skips POST when tags match existing tags in different order', async () => {
 		const provider = createApiProvider();
 		let postCalled = false;
