@@ -248,6 +248,45 @@ class SimperiumApiProvider implements Provider {
 		this.clearCache();
 		return normalizeOrThrow(id, noteData);
 	}
+
+	async restoreNote(id: string): Promise<NormalizedNote> {
+		const auth = await loadToken();
+		if (!auth) {
+			throw new ApiError(
+				'no_token',
+				'Not logged in. Run `simplenote-mcp setup` to authenticate.',
+			);
+		}
+
+		// Same fetch-merge-POST pattern as trashNote — the fresh GET preserves
+		// fields we don't model (publishURL, shareURL, creationDate, unknown
+		// systemTags) and catches cross-client races.
+		const existing = await fetchRawNote(id, auth.token);
+
+		// Already restored: no POST. Cache stays warm for the next read.
+		if (!toBool(existing.deleted)) {
+			return normalizeOrThrow(id, existing);
+		}
+
+		const nowUnix = Math.floor(Date.now() / 1000);
+		const noteData: Record<string, unknown> = {
+			...existing,
+			deleted: false,
+			modificationDate: nowUnix,
+		};
+
+		const ccid = randomUUID();
+		await simperiumRequest({
+			method: 'POST',
+			path: `/note/i/${encodeURIComponent(id)}?ccid=${ccid}`,
+			token: auth.token,
+			body: noteData,
+			context: 'restoring note',
+		});
+
+		this.clearCache();
+		return normalizeOrThrow(id, noteData);
+	}
 }
 
 // Centralizes auth header, timeout, and the universal status mappings shared
