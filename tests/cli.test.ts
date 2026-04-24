@@ -1,11 +1,16 @@
 import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { readFile, stat, writeFile } from 'node:fs/promises';
 import type { Interface } from 'node:readline/promises';
 import { AuthError } from '../src/providers/auth.ts';
 import { _test } from '../src/cli.ts';
+import {
+	captureConsole,
+	captureConsoleSync,
+	mockFetchQueue,
+	useEnvVar,
+	useTmpDir,
+} from './helpers.ts';
 
 const {
 	reportAuthError,
@@ -14,22 +19,9 @@ const {
 	setupCommand,
 } = _test;
 
-function captureStderr(run: () => void): string[] {
-	const calls: string[] = [];
-	const restore = mock.method(console, 'error', (msg: unknown) => {
-		calls.push(String(msg));
-	});
-	try {
-		run();
-	} finally {
-		restore.mock.restore();
-	}
-	return calls;
-}
-
 describe('reportAuthError', () => {
 	it('formats AuthError with the provided prefix', () => {
-		const calls = captureStderr(() => {
+		const calls = captureConsoleSync('error', () => {
 			const code = reportAuthError(
 				new AuthError('invalid_code', 'Auth code rejected.'),
 				'Login failed.',
@@ -40,7 +32,7 @@ describe('reportAuthError', () => {
 	});
 
 	it('adds the network-connection hint for network_error', () => {
-		const calls = captureStderr(() => {
+		const calls = captureConsoleSync('error', () => {
 			reportAuthError(
 				new AuthError('network_error', 'connection refused'),
 				'Login failed.',
@@ -50,7 +42,7 @@ describe('reportAuthError', () => {
 	});
 
 	it('handles plain Error instances', () => {
-		const calls = captureStderr(() => {
+		const calls = captureConsoleSync('error', () => {
 			const code = reportAuthError(new Error('boom'), 'Oops.');
 			assert.equal(code, 1);
 		});
@@ -60,7 +52,7 @@ describe('reportAuthError', () => {
 	it('handles non-Error thrown values without leaking undefined', () => {
 		// Throwing a raw string / plain object is legal in JS. The old
 		// `(err as Error).message` would print "undefined" (or throw on null).
-		const calls = captureStderr(() => {
+		const calls = captureConsoleSync('error', () => {
 			reportAuthError('raw string value', 'Prefix:');
 		});
 		assert.ok(calls.some((c) => c.includes('raw string value')));
@@ -68,7 +60,7 @@ describe('reportAuthError', () => {
 	});
 
 	it('coerces null without crashing', () => {
-		const calls = captureStderr(() => {
+		const calls = captureConsoleSync('error', () => {
 			const code = reportAuthError(null, 'Prefix:');
 			assert.equal(code, 1);
 		});
@@ -158,14 +150,6 @@ function makePrompt(responses: string[]): () => Interface {
 	};
 }
 
-function captureStdout(): { lines: string[]; restore: () => void } {
-	const lines: string[] = [];
-	const restore = mock.method(console, 'log', (msg: unknown) => {
-		lines.push(String(msg));
-	});
-	return { lines, restore: () => restore.mock.restore() };
-}
-
 async function fileExists(path: string): Promise<boolean> {
 	try {
 		await stat(path);
@@ -175,64 +159,25 @@ async function fileExists(path: string): Promise<boolean> {
 	}
 }
 
-// Mocks globalThis.fetch with a scripted queue. Each call shifts the next
-// entry; an entry with `throws` rejects, otherwise a Response is returned.
-type FetchScript = Array<
-	{ status: number; body: unknown } | { throws: unknown }
->;
-
-function mockFetchQueue(script: FetchScript): { calls: number } {
-	const state = { calls: 0 };
-	mock.method(globalThis, 'fetch', async () => {
-		const entry = script[state.calls++];
-		if (!entry) {
-			throw new Error('mockFetchQueue: unexpected extra fetch call');
-		}
-		if ('throws' in entry) {
-			throw entry.throws;
-		}
-		return new Response(JSON.stringify(entry.body), {
-			status: entry.status,
-			headers: { 'content-type': 'application/json' },
-		});
-	});
-	return state;
-}
-
 // ---------- setupCommand — already logged in ----------
 
 describe('setupCommand — already logged in', () => {
-	let dir: string;
-	let authPath: string;
-	let configPath: string;
-	let savedEnvToken: string | undefined;
-
+	const tmp = useTmpDir('smn-setup-');
+	useEnvVar('SIMPLENOTE_TOKEN');
+	afterEach(() => {
+		mock.restoreAll();
+	});
 	beforeEach(async () => {
-		dir = await mkdtemp(join(tmpdir(), 'smn-setup-'));
-		authPath = join(dir, 'auth.json');
-		configPath = join(dir, 'config.json');
 		await writeFile(
-			authPath,
+			tmp.path('auth.json'),
 			JSON.stringify({ username: 'mark@example.com', token: 'tok' }),
 		);
-		// loadToken honors SIMPLENOTE_TOKEN before the file. Clear it so
-		// these tests exercise the file-based "already logged in" branch.
-		savedEnvToken = process.env.SIMPLENOTE_TOKEN;
-		delete process.env.SIMPLENOTE_TOKEN;
-	});
-
-	afterEach(async () => {
-		mock.restoreAll();
-		if (savedEnvToken === undefined) {
-			delete process.env.SIMPLENOTE_TOKEN;
-		} else {
-			process.env.SIMPLENOTE_TOKEN = savedEnvToken;
-		}
-		await rm(dir, { recursive: true, force: true });
 	});
 
 	it('saves {source:api, writeMode:true} when user answers y', async () => {
-		const { restore } = captureStdout();
+		const authPath = tmp.path('auth.json');
+		const configPath = tmp.path('config.json');
+		const { restore } = captureConsole('log');
 		try {
 			const exitCode = await setupCommand({
 				...NO_LOCAL,
@@ -249,7 +194,9 @@ describe('setupCommand — already logged in', () => {
 	});
 
 	it('saves {source:api, writeMode:false} when user answers n', async () => {
-		const { restore } = captureStdout();
+		const authPath = tmp.path('auth.json');
+		const configPath = tmp.path('config.json');
+		const { restore } = captureConsole('log');
 		try {
 			const exitCode = await setupCommand({
 				...NO_LOCAL,
@@ -266,7 +213,9 @@ describe('setupCommand — already logged in', () => {
 	});
 
 	it('saves writeMode=false when user hits enter (default)', async () => {
-		const { restore } = captureStdout();
+		const authPath = tmp.path('auth.json');
+		const configPath = tmp.path('config.json');
+		const { restore } = captureConsole('log');
 		try {
 			const exitCode = await setupCommand({
 				...NO_LOCAL,
@@ -283,11 +232,13 @@ describe('setupCommand — already logged in', () => {
 	});
 
 	it('prints current logged-in email and writeMode OFF when config says false', async () => {
+		const authPath = tmp.path('auth.json');
+		const configPath = tmp.path('config.json');
 		await writeFile(
 			configPath,
 			JSON.stringify({ source: 'api', writeMode: false }),
 		);
-		const { lines, restore } = captureStdout();
+		const { lines, restore } = captureConsole('log');
 		try {
 			await setupCommand({
 				...NO_LOCAL,
@@ -304,7 +255,9 @@ describe('setupCommand — already logged in', () => {
 	});
 
 	it('says "not configured" when config is missing', async () => {
-		const { lines, restore } = captureStdout();
+		const authPath = tmp.path('auth.json');
+		const configPath = tmp.path('config.json');
+		const { lines, restore } = captureConsole('log');
 		try {
 			await setupCommand({
 				...NO_LOCAL,
@@ -319,11 +272,13 @@ describe('setupCommand — already logged in', () => {
 	});
 
 	it('shows "Previously using local" when prior config was source=local', async () => {
+		const authPath = tmp.path('auth.json');
+		const configPath = tmp.path('config.json');
 		await writeFile(
 			configPath,
 			JSON.stringify({ source: 'local', writeMode: false }),
 		);
-		const { lines, restore } = captureStdout();
+		const { lines, restore } = captureConsole('log');
 		try {
 			await setupCommand({
 				...NO_LOCAL,
@@ -342,12 +297,11 @@ describe('setupCommand — already logged in', () => {
 	});
 
 	it('recovers from a malformed config file (not JSON)', async () => {
+		const authPath = tmp.path('auth.json');
+		const configPath = tmp.path('config.json');
 		await writeFile(configPath, 'not json at all');
-		const errLines: string[] = [];
-		const restoreErr = mock.method(console, 'error', (msg: unknown) => {
-			errLines.push(String(msg));
-		});
-		const { restore } = captureStdout();
+		const err = captureConsole('error');
+		const out = captureConsole('log');
 		let exitCode: number;
 		try {
 			exitCode = await setupCommand({
@@ -357,12 +311,12 @@ describe('setupCommand — already logged in', () => {
 				createPrompt: makePrompt(['y']),
 			});
 		} finally {
-			restore();
-			restoreErr.mock.restore();
+			out.restore();
+			err.restore();
 		}
 		assert.equal(exitCode, 0);
 		assert.ok(
-			errLines.some((l) => /malformed/i.test(l)),
+			err.lines.some((l) => /malformed/i.test(l)),
 			'expected stderr note about malformed config',
 		);
 		const config = JSON.parse(await readFile(configPath, 'utf-8'));
@@ -370,15 +324,14 @@ describe('setupCommand — already logged in', () => {
 	});
 
 	it('recovers from a config file with wrong writeMode type', async () => {
+		const authPath = tmp.path('auth.json');
+		const configPath = tmp.path('config.json');
 		await writeFile(
 			configPath,
 			JSON.stringify({ source: 'api', writeMode: 'yes' }),
 		);
-		const errLines: string[] = [];
-		const restoreErr = mock.method(console, 'error', (msg: unknown) => {
-			errLines.push(String(msg));
-		});
-		const { restore } = captureStdout();
+		const err = captureConsole('error');
+		const out = captureConsole('log');
 		let exitCode: number;
 		try {
 			exitCode = await setupCommand({
@@ -388,12 +341,12 @@ describe('setupCommand — already logged in', () => {
 				createPrompt: makePrompt(['n']),
 			});
 		} finally {
-			restore();
-			restoreErr.mock.restore();
+			out.restore();
+			err.restore();
 		}
 		assert.equal(exitCode, 0);
 		assert.ok(
-			errLines.some((l) => /malformed/i.test(l)),
+			err.lines.some((l) => /malformed/i.test(l)),
 			'expected stderr note about malformed config',
 		);
 		const config = JSON.parse(await readFile(configPath, 'utf-8'));
@@ -404,32 +357,15 @@ describe('setupCommand — already logged in', () => {
 // ---------- setupCommand — not logged in ----------
 
 describe('setupCommand — not logged in', () => {
-	let dir: string;
-	let authPath: string;
-	let configPath: string;
-	let savedEnvToken: string | undefined;
-
-	beforeEach(async () => {
-		dir = await mkdtemp(join(tmpdir(), 'smn-setup-'));
-		authPath = join(dir, 'auth.json');
-		configPath = join(dir, 'config.json');
-		// loadToken honors SIMPLENOTE_TOKEN before the file — clear it so
-		// these tests genuinely hit the "not logged in" branch.
-		savedEnvToken = process.env.SIMPLENOTE_TOKEN;
-		delete process.env.SIMPLENOTE_TOKEN;
-	});
-
-	afterEach(async () => {
+	const tmp = useTmpDir('smn-setup-');
+	useEnvVar('SIMPLENOTE_TOKEN');
+	afterEach(() => {
 		mock.restoreAll();
-		if (savedEnvToken === undefined) {
-			delete process.env.SIMPLENOTE_TOKEN;
-		} else {
-			process.env.SIMPLENOTE_TOKEN = savedEnvToken;
-		}
-		await rm(dir, { recursive: true, force: true });
 	});
 
 	it('runs the full login flow, saves token, then saves config', async () => {
+		const authPath = tmp.path('auth.json');
+		const configPath = tmp.path('config.json');
 		mockFetchQueue([
 			{ status: 200, body: {} },
 			{
@@ -437,7 +373,7 @@ describe('setupCommand — not logged in', () => {
 				body: { username: 'mark@example.com', sync_token: 'tok123' },
 			},
 		]);
-		const { restore } = captureStdout();
+		const { restore } = captureConsole('log');
 		let exitCode: number;
 		try {
 			exitCode = await setupCommand({
@@ -458,12 +394,11 @@ describe('setupCommand — not logged in', () => {
 	});
 
 	it('exits 1 on network failure and writes no config', async () => {
+		const authPath = tmp.path('auth.json');
+		const configPath = tmp.path('config.json');
 		mockFetchQueue([{ throws: new Error('network refused') }]);
-		const errLines: string[] = [];
-		const restoreErr = mock.method(console, 'error', (msg: unknown) => {
-			errLines.push(String(msg));
-		});
-		const { restore } = captureStdout();
+		const err = captureConsole('error');
+		const out = captureConsole('log');
 		let exitCode: number;
 		try {
 			exitCode = await setupCommand({
@@ -473,19 +408,18 @@ describe('setupCommand — not logged in', () => {
 				createPrompt: makePrompt(['mark@example.com']),
 			});
 		} finally {
-			restore();
-			restoreErr.mock.restore();
+			out.restore();
+			err.restore();
 		}
 		assert.equal(exitCode, 1);
 		assert.equal(await fileExists(configPath), false);
 	});
 
 	it('exits 1 on empty email; no token, no config written', async () => {
-		const errLines: string[] = [];
-		const restoreErr = mock.method(console, 'error', (msg: unknown) => {
-			errLines.push(String(msg));
-		});
-		const { restore } = captureStdout();
+		const authPath = tmp.path('auth.json');
+		const configPath = tmp.path('config.json');
+		const err = captureConsole('error');
+		const out = captureConsole('log');
 		let exitCode: number;
 		try {
 			exitCode = await setupCommand({
@@ -495,13 +429,13 @@ describe('setupCommand — not logged in', () => {
 				createPrompt: makePrompt(['']),
 			});
 		} finally {
-			restore();
-			restoreErr.mock.restore();
+			out.restore();
+			err.restore();
 		}
 		assert.equal(exitCode, 1);
 		assert.equal(await fileExists(authPath), false);
 		assert.equal(await fileExists(configPath), false);
-		assert.ok(errLines.some((l) => /Email is required/.test(l)));
+		assert.ok(err.lines.some((l) => /Email is required/.test(l)));
 	});
 });
 
@@ -514,32 +448,17 @@ const LOCAL_AVAILABLE = {
 };
 
 describe('setupCommand — local DB detected', () => {
-	let dir: string;
-	let authPath: string;
-	let configPath: string;
-	let savedEnvToken: string | undefined;
-
-	beforeEach(async () => {
-		dir = await mkdtemp(join(tmpdir(), 'smn-setup-local-'));
-		authPath = join(dir, 'auth.json');
-		configPath = join(dir, 'config.json');
-		savedEnvToken = process.env.SIMPLENOTE_TOKEN;
-		delete process.env.SIMPLENOTE_TOKEN;
-	});
-
-	afterEach(async () => {
+	const tmp = useTmpDir('smn-setup-local-');
+	useEnvVar('SIMPLENOTE_TOKEN');
+	afterEach(() => {
 		mock.restoreAll();
-		if (savedEnvToken === undefined) {
-			delete process.env.SIMPLENOTE_TOKEN;
-		} else {
-			process.env.SIMPLENOTE_TOKEN = savedEnvToken;
-		}
-		await rm(dir, { recursive: true, force: true });
 	});
 
 	it('saves source=local when user accepts (Y), skipping writeMode and login', async () => {
+		const authPath = tmp.path('auth.json');
+		const configPath = tmp.path('config.json');
 		// No auth.json on disk. The local-DB choice should not require login.
-		const { restore } = captureStdout();
+		const { restore } = captureConsole('log');
 		let exitCode: number;
 		try {
 			exitCode = await setupCommand({
@@ -559,7 +478,9 @@ describe('setupCommand — local DB detected', () => {
 	});
 
 	it('saves source=local when user hits enter (default is Y)', async () => {
-		const { restore } = captureStdout();
+		const authPath = tmp.path('auth.json');
+		const configPath = tmp.path('config.json');
+		const { restore } = captureConsole('log');
 		let exitCode: number;
 		try {
 			exitCode = await setupCommand({
@@ -577,6 +498,8 @@ describe('setupCommand — local DB detected', () => {
 	});
 
 	it('when user declines local (n), falls through to login + writeMode prompt', async () => {
+		const authPath = tmp.path('auth.json');
+		const configPath = tmp.path('config.json');
 		mockFetchQueue([
 			{ status: 200, body: {} },
 			{
@@ -584,7 +507,7 @@ describe('setupCommand — local DB detected', () => {
 				body: { username: 'mark@example.com', sync_token: 'tok123' },
 			},
 		]);
-		const { restore } = captureStdout();
+		const { restore } = captureConsole('log');
 		let exitCode: number;
 		try {
 			exitCode = await setupCommand({
@@ -603,11 +526,13 @@ describe('setupCommand — local DB detected', () => {
 	});
 
 	it('when user declines local (n) and is already logged in, skips login but still asks writeMode', async () => {
+		const authPath = tmp.path('auth.json');
+		const configPath = tmp.path('config.json');
 		await writeFile(
 			authPath,
 			JSON.stringify({ username: 'mark@example.com', token: 'tok' }),
 		);
-		const { restore } = captureStdout();
+		const { restore } = captureConsole('log');
 		let exitCode: number;
 		try {
 			exitCode = await setupCommand({

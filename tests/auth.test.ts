@@ -1,8 +1,7 @@
-import { afterEach, beforeEach, describe, it, mock } from 'node:test';
+import { afterEach, describe, it, mock } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { chmod, mkdtemp, rm, stat, readFile, writeFile } from 'node:fs/promises';
-import { tmpdir, platform } from 'node:os';
-import { join } from 'node:path';
+import { chmod, stat, readFile, writeFile } from 'node:fs/promises';
+import { platform } from 'node:os';
 import {
 	AuthError,
 	completeLogin,
@@ -12,6 +11,7 @@ import {
 	saveToken,
 	_test,
 } from '../src/providers/auth.ts';
+import { mockFetch, useTmpDir } from './helpers.ts';
 
 const { extractToken, extractUsername } = _test;
 
@@ -45,10 +45,6 @@ describe('extractUsername', () => {
 });
 
 // ---------- HTTP-mocked tests ----------
-
-function mockFetch(impl: (input: string, init: RequestInit) => Promise<Response> | Response) {
-	mock.method(globalThis, 'fetch', impl as typeof globalThis.fetch);
-}
 
 afterEach(() => {
 	mock.restoreAll();
@@ -152,19 +148,10 @@ describe('completeLogin', () => {
 // ---------- token file I/O ----------
 
 describe('token file roundtrip (tmpdir)', () => {
-	let dir: string;
-	let tokenPath: string;
-
-	beforeEach(async () => {
-		dir = await mkdtemp(join(tmpdir(), 'simplenote-mcp-test-'));
-		tokenPath = join(dir, 'auth.json');
-	});
-
-	afterEach(async () => {
-		await rm(dir, { recursive: true, force: true });
-	});
+	const tmp = useTmpDir('simplenote-mcp-test-');
 
 	it('saveToken creates a 0600 file with the expected payload', async () => {
+		const tokenPath = tmp.path('auth.json');
 		const path = await saveToken({ username: 'a@b.com', token: 'tok' }, tokenPath);
 		assert.equal(path, tokenPath);
 
@@ -182,6 +169,7 @@ describe('token file roundtrip (tmpdir)', () => {
 			t.skip('POSIX permission model');
 			return;
 		}
+		const tokenPath = tmp.path('auth.json');
 		await writeFile(tokenPath, '{}');
 		await chmod(tokenPath, 0o644);
 		assert.equal((await stat(tokenPath)).mode & 0o777, 0o644);
@@ -191,29 +179,33 @@ describe('token file roundtrip (tmpdir)', () => {
 	});
 
 	it('loadToken reads what saveToken wrote', async () => {
+		const tokenPath = tmp.path('auth.json');
 		await saveToken({ username: 'a@b.com', token: 'tok' }, tokenPath);
 		const out = await loadToken({ tokenPath, env: {} });
 		assert.deepEqual(out, { username: 'a@b.com', token: 'tok' });
 	});
 
 	it('loadToken returns null when file is missing', async () => {
-		const out = await loadToken({ tokenPath, env: {} });
+		const out = await loadToken({ tokenPath: tmp.path('auth.json'), env: {} });
 		assert.equal(out, null);
 	});
 
 	it('loadToken returns null when file is invalid JSON', async () => {
+		const tokenPath = tmp.path('auth.json');
 		await writeFile(tokenPath, 'not json');
 		const out = await loadToken({ tokenPath, env: {} });
 		assert.equal(out, null);
 	});
 
 	it('loadToken returns null when token field is missing', async () => {
+		const tokenPath = tmp.path('auth.json');
 		await writeFile(tokenPath, JSON.stringify({ username: 'a@b.com' }));
 		const out = await loadToken({ tokenPath, env: {} });
 		assert.equal(out, null);
 	});
 
 	it('SIMPLENOTE_TOKEN env var takes precedence over file', async () => {
+		const tokenPath = tmp.path('auth.json');
 		await saveToken({ username: 'a@b.com', token: 'from-file' }, tokenPath);
 		const out = await loadToken({
 			tokenPath,
@@ -223,6 +215,7 @@ describe('token file roundtrip (tmpdir)', () => {
 	});
 
 	it('deleteToken returns true for existing files, false otherwise', async () => {
+		const tokenPath = tmp.path('auth.json');
 		await saveToken({ username: 'a@b.com', token: 'tok' }, tokenPath);
 		assert.equal(await deleteToken(tokenPath), true);
 		assert.equal(await deleteToken(tokenPath), false);
