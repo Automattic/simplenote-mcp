@@ -495,6 +495,7 @@ if (provider.restoreNote) {
 			description:
 				'Restore a previously-trashed note so it reappears in active lists. ' +
 				'Inverse of trash_note. ' +
+				'One note per call. ' +
 				'Requires write-mode enabled in `simplenote-mcp setup` and a provider that supports writes (Simperium API).',
 			inputSchema: {
 				id: z.string().describe('Note ID (simperiumkey) to restore'),

@@ -222,10 +222,12 @@ class SimperiumApiProvider implements Provider {
 		// a partial POST would wipe those fields. Same approach as updateNote.
 		// The fresh GET also catches the case where another client trashed the
 		// note between any caller's cached pre-check and now.
-		const existing = await fetchRawNote(id, auth.token);
+		const { data: existing } = await fetchRawNote(id, auth.token);
 
-		// Already trashed: no POST. Cache stays warm for the next read.
+		// Already trashed: no POST. The fresh GET is authoritative, so drop
+		// any stale cache that may disagree (cross-client race).
 		if (toBool(existing.deleted)) {
+			this.clearCache();
 			return normalizeOrThrow(id, existing);
 		}
 
@@ -261,10 +263,12 @@ class SimperiumApiProvider implements Provider {
 		// Same fetch-merge-POST pattern as trashNote — the fresh GET preserves
 		// fields we don't model (publishURL, shareURL, creationDate, unknown
 		// systemTags) and catches cross-client races.
-		const existing = await fetchRawNote(id, auth.token);
+		const { data: existing } = await fetchRawNote(id, auth.token);
 
-		// Already restored: no POST. Cache stays warm for the next read.
+		// Already restored: no POST. The fresh GET is authoritative, so drop
+		// any stale cache that may disagree (cross-client race).
 		if (!toBool(existing.deleted)) {
+			this.clearCache();
 			return normalizeOrThrow(id, existing);
 		}
 

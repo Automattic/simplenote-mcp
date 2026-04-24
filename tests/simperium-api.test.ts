@@ -1227,7 +1227,10 @@ describe('trashNote', () => {
 		assert.equal(indexFetchCount, 4);
 	});
 
-	it('does not invalidate cache on already-trashed short-circuit', async () => {
+	it('invalidates cache on already-trashed short-circuit', async () => {
+		// The fresh GET is authoritative — if it reveals the note is already
+		// trashed while the cache still thinks it's active (cross-client race),
+		// we must drop the stale cache even though we skipped the POST.
 		const provider = createApiProvider();
 		let indexFetchCount = 0;
 
@@ -1250,9 +1253,9 @@ describe('trashNote', () => {
 
 		await provider.trashNote!('note-1');
 
-		// Cache should still be warm.
+		// Short-circuit still drops the cache — next load refetches.
 		await provider.loadStore();
-		assert.equal(indexFetchCount, 2);
+		assert.equal(indexFetchCount, 4);
 	});
 });
 
@@ -1501,7 +1504,10 @@ describe('restoreNote', () => {
 		assert.equal(indexFetchCount, 4);
 	});
 
-	it('does not invalidate cache on already-restored short-circuit', async () => {
+	it('invalidates cache on already-restored short-circuit', async () => {
+		// The fresh GET is authoritative — if it reveals the note is already
+		// restored while the cache still thinks it's trashed (cross-client race),
+		// we must drop the stale cache even though we skipped the POST.
 		const provider = createApiProvider();
 		let indexFetchCount = 0;
 
@@ -1525,7 +1531,7 @@ describe('restoreNote', () => {
 		await provider.restoreNote!('note-1');
 
 		await provider.loadStore();
-		assert.equal(indexFetchCount, 2);
+		assert.equal(indexFetchCount, 4);
 	});
 });
 
