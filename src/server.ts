@@ -45,6 +45,15 @@ const WRITE_ANNOTATIONS = {
 	openWorldHint: true,
 } as const;
 
+// Trashing is destructive but soft (recoverable from any Simplenote client)
+// and idempotent — a second call on an already-trashed note is a no-op.
+const TRASH_ANNOTATIONS = {
+	readOnlyHint: false,
+	destructiveHint: true,
+	idempotentHint: true,
+	openWorldHint: true,
+} as const;
+
 server.registerTool(
 	'list_tags',
 	{
@@ -408,6 +417,85 @@ if (provider.updateNote) {
 						},
 					],
 				};
+			}
+		},
+	);
+}
+
+if (provider.trashNote) {
+	const trashNote = provider.trashNote.bind(provider);
+	server.registerTool(
+		'trash_note',
+		{
+			title: 'Trash Note',
+			description:
+				'Move a note to the Simplenote trash. Soft-delete only — the note ' +
+				'stays in the bucket and can be restored from any Simplenote client. ' +
+				'One note per call. ' +
+				'Requires write-mode enabled in `simplenote-mcp setup` and a provider that supports writes (Simperium API).',
+			inputSchema: {
+				id: z.string().describe('Note ID (simperiumkey) to trash'),
+			},
+			annotations: TRASH_ANNOTATIONS,
+		},
+		async ({ id }) => {
+			try {
+				// Pre-check from cache so the caller gets a specific message for
+				// "not found" vs "already in trash" without making a wasted POST.
+				// The provider also fetches fresh on the happy path, which catches
+				// races where another client trashed the note in the meantime.
+				const { notes } = await provider.loadStore();
+				const existing = notes.find((n) => n.id === id);
+				if (!existing) {
+					return {
+						content: [{ type: 'text', text: 'Note not found' }],
+						isError: true,
+					};
+				}
+				if (existing.deleted) {
+					// Omit trashed_at: `modified` is just last-modified, which
+					// can drift from the actual trash event if the note was
+					// edited while in trash. Simperium doesn't track those
+					// separately.
+					return {
+						content: [
+							{
+								type: 'text',
+								text: JSON.stringify(
+									{
+										success: true,
+										id: existing.id,
+										title: extractTitle(existing.content),
+										message: 'Note was already in trash',
+									},
+									null,
+									2,
+								),
+							},
+						],
+					};
+				}
+
+				const trashed = await trashNote(id);
+				return {
+					content: [
+						{
+							type: 'text',
+							text: JSON.stringify(
+								{
+									success: true,
+									id: trashed.id,
+									title: extractTitle(trashed.content),
+									trashed_at: trashed.modified,
+								},
+								null,
+								2,
+							),
+						},
+					],
+				};
+			} catch (err) {
+				return toolError(err);
 			}
 		},
 	);

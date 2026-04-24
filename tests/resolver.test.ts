@@ -23,6 +23,16 @@ const API: Provider = {
 	loadStore: async () => ({ notes: [], tags: [] }),
 	createNote: async () => ({ id: 'stub-id', version: 1 }),
 	updateNote: async () => ({ id: 'stub-id', version: 2 }),
+	trashNote: async (id: string) => ({
+		id,
+		content: '',
+		tags: [],
+		pinned: false,
+		markdown: false,
+		deleted: true,
+		created: null,
+		modified: null,
+	}),
 };
 
 type Stubs = {
@@ -153,6 +163,7 @@ describe('resolveProvider — source=api + writeMode=true', () => {
 		assert.equal(provider.name, 'simperium-api');
 		assert.equal(typeof provider.createNote, 'function');
 		assert.equal(typeof provider.updateNote, 'function');
+		assert.equal(typeof provider.trashNote, 'function');
 		assert.equal(stubs.apiCalls, 1);
 		assert.equal(stubs.nativeCalls.length, 0);
 	});
@@ -188,7 +199,7 @@ describe('resolveProvider — source=api + writeMode=false', () => {
 		assert.equal(stubs.nativeCalls.length, 0);
 	});
 
-	it('strips createNote and updateNote from the provider (read-only)', async () => {
+	it('strips createNote, updateNote, and trashNote from the provider (read-only)', async () => {
 		const { deps } = makeDeps({
 			loadConfig: async () => ({ source: 'api', writeMode: false }),
 			loadToken: async () => ({ username: 'a@b.com', token: 'tok' }),
@@ -203,6 +214,11 @@ describe('resolveProvider — source=api + writeMode=false', () => {
 			provider.updateNote,
 			undefined,
 			'updateNote must not be exposed in read-only mode',
+		);
+		assert.equal(
+			provider.trashNote,
+			undefined,
+			'trashNote must not be exposed in read-only mode',
 		);
 	});
 
