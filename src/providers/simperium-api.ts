@@ -35,7 +35,8 @@ export type ApiErrorCode =
 	| 'not_found'
 	| 'note_in_trash'
 	| 'empty_content'
-	| 'rate_limited';
+	| 'rate_limited'
+	| 'version_not_found';
 
 export class ApiError extends Error {
 	readonly code: ApiErrorCode;

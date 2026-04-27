@@ -44,6 +44,32 @@ export type NoteUpdateResult = {
 	version: number;
 };
 
+export type NoteVersionEntry = {
+	version: number;
+	modified_at: string | null;
+	content_preview: string;
+};
+
+export type NoteHistoryResult = {
+	id: string;
+	current_version: number;
+	entries: NoteVersionEntry[];
+};
+
+export type NoteVersionResult = NormalizedNote & { version: number };
+
+export type NoteRevertInput = {
+	id: string;
+	version: number;
+};
+
+export type NoteRevertResult = {
+	id: string;
+	reverted_from_version: number;
+	new_version: number;
+	no_op: boolean;
+};
+
 export type Provider = {
 	readonly name: 'native-macos' | 'simperium-api';
 	readonly description: string;
@@ -52,6 +78,9 @@ export type Provider = {
 	updateNote?(input: NoteUpdateInput): Promise<NoteUpdateResult>;
 	trashNote?(id: string): Promise<NormalizedNote>;
 	restoreNote?(id: string): Promise<NormalizedNote>;
+	getNoteHistory?(id: string, limit: number): Promise<NoteHistoryResult>;
+	getNoteVersion?(id: string, version: number): Promise<NoteVersionResult>;
+	revertNote?(input: NoteRevertInput): Promise<NoteRevertResult>;
 };
 
 export function extractTitle(content: string | null | undefined): string {
