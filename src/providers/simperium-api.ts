@@ -6,8 +6,13 @@ import type {
 	NormalizedTag,
 	NoteCreateInput,
 	NoteCreateResult,
+	NoteHistoryResult,
+	NoteRevertInput,
+	NoteRevertResult,
 	NoteUpdateInput,
 	NoteUpdateResult,
+	NoteVersionEntry,
+	NoteVersionResult,
 	Provider,
 } from './normalize.js';
 
@@ -335,6 +340,25 @@ class SimperiumApiProvider implements Provider {
 		this.recordWrite();
 		this.clearCache();
 		return normalizeOrThrow(id, noteData);
+	}
+
+	async getNoteVersion(id: string, version: number): Promise<NoteVersionResult> {
+		if (!Number.isInteger(version) || version < 1) {
+			throw new ApiError(
+				'invalid_response',
+				`Invalid version ${version}: must be a positive integer.`,
+			);
+		}
+		const auth = await loadToken();
+		if (!auth) {
+			throw new ApiError(
+				'no_token',
+				'Not logged in. Run `simplenote-mcp setup` to authenticate.',
+			);
+		}
+		const data = await fetchNoteVersion(id, version, auth.token);
+		const normalized = normalizeOrThrow(id, data);
+		return { ...normalized, version };
 	}
 }
 

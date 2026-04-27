@@ -3,7 +3,6 @@ import { strict as assert } from 'node:assert';
 import { ApiError, createApiProvider, _test } from '../src/providers/simperium-api.ts';
 import { captureFetch, mockFetch, useEnvVar } from './helpers/general.ts';
 import {
-	captureFetch,
 	emptyIndexResponse,
 	isNotePost,
 	isRawNoteGet,
@@ -969,6 +968,87 @@ describe('updateNote', () => {
 		// Load again — cache should be cleared, so two more index fetches
 		await provider.loadStore();
 		assert.equal(indexFetchCount, 4);
+	});
+});
+
+describe('getNoteVersion', () => {
+	it('returns a normalized note with the requested version', async () => {
+		const provider = createApiProvider();
+		captureFetch((url) => {
+			if (/\/note\/i\/note-1\/v\/5$/.test(url)) {
+				return new Response(
+					JSON.stringify({
+						content: 'Old title\nbody',
+						tags: ['work'],
+						systemTags: ['markdown'],
+						deleted: false,
+						creationDate: 1700000000,
+						modificationDate: 1700000100,
+					}),
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				);
+			}
+			throw new Error(`Unexpected fetch: ${url}`);
+		});
+
+		const result = await provider.getNoteVersion!('note-1', 5);
+
+		assert.equal(result.id, 'note-1');
+		assert.equal(result.version, 5);
+		assert.equal(result.content, 'Old title\nbody');
+		assert.deepEqual(result.tags, ['work']);
+		assert.equal(result.markdown, true);
+		assert.equal(result.deleted, false);
+		assert.equal(result.modified, '2023-11-14T22:15:00.000Z');
+	});
+
+	it('throws version_not_found on 404', async () => {
+		const provider = createApiProvider();
+		captureFetch(() => new Response('', { status: 404 }));
+		await assert.rejects(
+			() => provider.getNoteVersion!('note-1', 999),
+			(err: ApiError) =>
+				err instanceof ApiError && err.code === 'version_not_found',
+		);
+	});
+
+	it('rejects non-positive version before any fetch', async () => {
+		const provider = createApiProvider();
+		let fetched = false;
+		mockFetch(async () => {
+			fetched = true;
+			return new Response('{}', { status: 200 });
+		});
+		await assert.rejects(() => provider.getNoteVersion!('note-1', 0));
+		await assert.rejects(() => provider.getNoteVersion!('note-1', -1));
+		await assert.rejects(() => provider.getNoteVersion!('note-1', 1.5));
+		assert.equal(fetched, false);
+	});
+
+	it('does not consume the write budget', async () => {
+		const provider = createApiProvider();
+		// Saturate the budget with successful updates first.
+		captureFetch((url, init) => {
+			if (isRawNoteGet(url, init?.method)) {
+				return rawNoteResponse({ content: 'orig' });
+			}
+			if (isNotePost(init?.method)) {
+				return new Response('2', { status: 200 });
+			}
+			if (/\/v\/\d+$/.test(url)) {
+				return new Response(
+					JSON.stringify({ content: 'v', modificationDate: 1700000100 }),
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				);
+			}
+			throw new Error(`Unexpected fetch: ${init?.method} ${url}`);
+		});
+		for (let i = 0; i < 5; i++) {
+			await provider.updateNote!({ id: 'note-1', content: `change ${i}` });
+		}
+		// updateNote would now throw rate_limited; getNoteVersion must not.
+		const result = await provider.getNoteVersion!('note-1', 1);
+		assert.equal(result.id, 'note-1');
 	});
 });
 
