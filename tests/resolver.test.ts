@@ -3,7 +3,7 @@ import { strict as assert } from 'node:assert';
 import { ConfigError, type Config } from '../src/providers/config.ts';
 import type { Provider } from '../src/providers/normalize.ts';
 import { resolveProvider, type ResolveDeps } from '../src/providers/resolver.ts';
-import { captureConsole } from './helpers.ts';
+import { captureConsole } from './helpers/general.ts';
 
 afterEach(() => {
 	mock.restoreAll();

@@ -3,7 +3,7 @@ import { strict as assert } from 'node:assert';
 import { chmod, readFile, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ConfigError, loadConfig, saveConfig } from '../src/providers/config.ts';
-import { useTmpDir } from './helpers.ts';
+import { useTmpDir } from './helpers/general.ts';
 
 describe('loadConfig', () => {
 	const tmp = useTmpDir('simplenote-mcp-config-test-');

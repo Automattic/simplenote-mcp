@@ -11,7 +11,7 @@ import {
 	mockFetchQueue,
 	useEnvVar,
 	useTmpDir,
-} from './helpers.ts';
+} from './helpers/general.ts';
 
 const {
 	reportAuthError,

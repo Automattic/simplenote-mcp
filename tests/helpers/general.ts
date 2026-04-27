@@ -25,13 +25,20 @@ export function useTmpDir(prefix = 'simplenote-mcp-test-'): {
 	return ctx;
 }
 
-// Registers before/afterEach hooks that delete process.env[key] before each
-// test and restore its prior value after — scoped to the enclosing describe.
-export function useEnvVar(key: string): void {
+// Registers before/afterEach hooks that scope process.env[key] to each test
+// in the enclosing describe. If `value` is given, the key is set to that
+// value before each test (useful for tests that need a deterministic env);
+// otherwise the key is deleted before each test. The prior value is restored
+// in either case.
+export function useEnvVar(key: string, value?: string): void {
 	let saved: string | undefined;
 	beforeEach(() => {
 		saved = process.env[key];
-		delete process.env[key];
+		if (value === undefined) {
+			delete process.env[key];
+		} else {
+			process.env[key] = value;
+		}
 	});
 	afterEach(() => {
 		if (saved === undefined) {
@@ -42,12 +49,15 @@ export function useEnvVar(key: string): void {
 	});
 }
 
+export type FetchImpl = (
+	input: string,
+	init?: RequestInit,
+) => Promise<Response> | Response;
+
 // Replaces globalThis.fetch with `impl`. Cleaned up by mock.restoreAll()
 // in an afterEach hook (callers are responsible for registering it).
-export function mockFetch(
-	impl: (input: string, init: RequestInit) => Promise<Response> | Response,
-): void {
-	mock.method(globalThis, 'fetch', impl as typeof globalThis.fetch);
+export function mockFetch(impl: FetchImpl): void {
+	mock.method(globalThis, 'fetch', impl as unknown as typeof globalThis.fetch);
 }
 
 export type FetchScriptEntry =

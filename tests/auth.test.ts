@@ -11,7 +11,7 @@ import {
 	saveToken,
 	_test,
 } from '../src/providers/auth.ts';
-import { mockFetch, useTmpDir } from './helpers.ts';
+import { mockFetch, useTmpDir } from './helpers/general.ts';
 
 const { extractToken, extractUsername } = _test;
 
@@ -56,7 +56,7 @@ describe('requestLoginCode', () => {
 		let observedBody: unknown;
 		mockFetch(async (url, init) => {
 			observedUrl = String(url);
-			observedBody = JSON.parse(init.body as string);
+			observedBody = JSON.parse(init!.body as string);
 			return new Response('', { status: 200 });
 		});
 		await requestLoginCode('alice@example.com');
