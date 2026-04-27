@@ -1949,3 +1949,124 @@ describeRevertToggle({ label: 'live → live', startDeleted: false, targetDelete
 describeRevertToggle({ label: 'trashed → live (un-trash)', startDeleted: true, targetDeleted: false });
 describeRevertToggle({ label: 'live → trashed (re-trash)', startDeleted: false, targetDeleted: true });
 describeRevertToggle({ label: 'trashed → trashed', startDeleted: true, targetDeleted: true });
+
+describe('revertNote (no-op and errors)', () => {
+	it('short-circuits when target is identical to current — no POST', async () => {
+		const provider = createApiProvider();
+		let postCount = 0;
+		captureFetch((url, init) => {
+			if (isRawNoteGet(url, init?.method)) {
+				return rawNoteResponse(
+					{
+						content: 'same',
+						tags: ['t'],
+						systemTags: ['markdown'],
+						deleted: false,
+					},
+					{ version: 5 },
+				);
+			}
+			if (/\/v\/2$/.test(url)) {
+				return new Response(
+					JSON.stringify({
+						content: 'same',
+						tags: ['t'],
+						systemTags: ['markdown'],
+						deleted: false,
+						modificationDate: 1700000000,
+					}),
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				);
+			}
+			if (isNotePost(init?.method)) {
+				postCount++;
+				return new Response('6', { status: 200 });
+			}
+			throw new Error(`Unexpected fetch: ${init?.method} ${url}`);
+		});
+
+		const result = await provider.revertNote!({ id: 'note-1', version: 2 });
+
+		assert.equal(postCount, 0);
+		assert.deepEqual(result, {
+			id: 'note-1',
+			reverted_from_version: 2,
+			new_version: 5,
+			no_op: true,
+		});
+	});
+
+	it('does not consume budget on no-op', async () => {
+		const provider = createApiProvider();
+		captureFetch((url, init) => {
+			if (isRawNoteGet(url, init?.method)) {
+				return rawNoteResponse(
+					{ content: 'same', deleted: false },
+					{ version: 1 },
+				);
+			}
+			if (/\/v\/1$/.test(url)) {
+				return new Response(
+					JSON.stringify({
+						content: 'same',
+						deleted: false,
+						modificationDate: 1700000000,
+					}),
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				);
+			}
+			if (isNotePost(init?.method)) {
+				return new Response('2', { status: 200 });
+			}
+			throw new Error(`Unexpected fetch: ${init?.method} ${url}`);
+		});
+		// 5 no-op reverts must not exhaust the budget.
+		for (let i = 0; i < 5; i++) {
+			await provider.revertNote!({ id: 'note-1', version: 1 });
+		}
+		// A 6th call still works (would throw if budget were spent).
+		const result = await provider.revertNote!({ id: 'note-1', version: 1 });
+		assert.equal(result.no_op, true);
+	});
+
+	it('surfaces version_not_found when the target version GET 404s', async () => {
+		const provider = createApiProvider();
+		captureFetch((url, init) => {
+			if (isRawNoteGet(url, init?.method)) {
+				return rawNoteResponse({ content: 'c' }, { version: 5 });
+			}
+			if (/\/v\/999$/.test(url)) {
+				return new Response('', { status: 404 });
+			}
+			throw new Error(`Unexpected fetch: ${init?.method} ${url}`);
+		});
+
+		await assert.rejects(
+			() => provider.revertNote!({ id: 'note-1', version: 999 }),
+			(err: ApiError) =>
+				err instanceof ApiError && err.code === 'version_not_found',
+		);
+	});
+
+	it('surfaces not_found when the current-state GET 404s', async () => {
+		const provider = createApiProvider();
+		captureFetch(() => new Response('', { status: 404 }));
+		await assert.rejects(
+			() => provider.revertNote!({ id: 'note-1', version: 1 }),
+			(err: ApiError) => err instanceof ApiError && err.code === 'not_found',
+		);
+	});
+
+	it('rejects non-positive version before any fetch', async () => {
+		const provider = createApiProvider();
+		let fetched = false;
+		mockFetch(async () => {
+			fetched = true;
+			return new Response('{}', { status: 200 });
+		});
+		await assert.rejects(() => provider.revertNote!({ id: 'note-1', version: 0 }));
+		await assert.rejects(() => provider.revertNote!({ id: 'note-1', version: -1 }));
+		await assert.rejects(() => provider.revertNote!({ id: 'note-1', version: 1.5 }));
+		assert.equal(fetched, false);
+	});
+});
