@@ -51,6 +51,7 @@ export type Provider = {
 	createNote?(input: NoteCreateInput): Promise<NoteCreateResult>;
 	updateNote?(input: NoteUpdateInput): Promise<NoteUpdateResult>;
 	trashNote?(id: string): Promise<NormalizedNote>;
+	restoreNote?(id: string): Promise<NormalizedNote>;
 };
 
 export function extractTitle(content: string | null | undefined): string {

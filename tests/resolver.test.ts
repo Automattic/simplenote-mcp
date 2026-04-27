@@ -33,6 +33,16 @@ const API: Provider = {
 		created: null,
 		modified: null,
 	}),
+	restoreNote: async (id: string) => ({
+		id,
+		content: '',
+		tags: [],
+		pinned: false,
+		markdown: false,
+		deleted: false,
+		created: null,
+		modified: null,
+	}),
 };
 
 type Stubs = {
@@ -164,6 +174,7 @@ describe('resolveProvider — source=api + writeMode=true', () => {
 		assert.equal(typeof provider.createNote, 'function');
 		assert.equal(typeof provider.updateNote, 'function');
 		assert.equal(typeof provider.trashNote, 'function');
+		assert.equal(typeof provider.restoreNote, 'function');
 		assert.equal(stubs.apiCalls, 1);
 		assert.equal(stubs.nativeCalls.length, 0);
 	});
@@ -199,7 +210,7 @@ describe('resolveProvider — source=api + writeMode=false', () => {
 		assert.equal(stubs.nativeCalls.length, 0);
 	});
 
-	it('strips createNote, updateNote, and trashNote from the provider (read-only)', async () => {
+	it('strips createNote, updateNote, trashNote, and restoreNote from the provider (read-only)', async () => {
 		const { deps } = makeDeps({
 			loadConfig: async () => ({ source: 'api', writeMode: false }),
 			loadToken: async () => ({ username: 'a@b.com', token: 'tok' }),
@@ -219,6 +230,11 @@ describe('resolveProvider — source=api + writeMode=false', () => {
 			provider.trashNote,
 			undefined,
 			'trashNote must not be exposed in read-only mode',
+		);
+		assert.equal(
+			provider.restoreNote,
+			undefined,
+			'restoreNote must not be exposed in read-only mode',
 		);
 	});
 
