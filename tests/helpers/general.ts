@@ -80,12 +80,14 @@ export function captureFetch(
 			Object.entries(init?.headers ?? {}).map(([k, v]) => [k, String(v)]),
 		);
 		let body: unknown;
-		if (init?.body !== undefined) {
+		if (typeof init?.body === 'string') {
 			try {
-				body = JSON.parse(init.body as string);
+				body = JSON.parse(init.body);
 			} catch {
 				body = init.body;
 			}
+		} else if (init?.body !== undefined) {
+			body = init.body;
 		}
 		calls.push({ url, method: init?.method, headers, body });
 		return respond(url, init);
