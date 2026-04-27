@@ -263,6 +263,40 @@ Get the full content of a specific note.
 
 **Returns:** `{id, content, tags, pinned, markdown, deleted, created, modified}`
 
+### get_note_history
+
+List recent versions of a note with short content previews. Read-only.
+
+**Parameters:**
+- `id` (string, required) — note ID
+- `limit` (number, optional, default: 10, max: 25) — max versions to return
+
+**Returns:** `{id, current_version, entries: [{version, modified_at, content_preview}]}` sorted current-first. Versions outside Simperium's retention window are silently dropped — non-contiguous `version` numbers signal the gap.
+
+### get_note_version
+
+Get the full content of a specific historical version of a note. Read-only. Use to preview content before calling `revert_note`.
+
+**Parameters:**
+- `id` (string, required) — note ID
+- `version` (number, required) — version number (positive integer)
+
+**Returns:** `{id, version, content, tags, pinned, markdown, deleted, created, modified}`. Throws `version_not_found` if the version is outside Simperium's retention window.
+
+### revert_note
+
+Restore a note to a prior version. Counts toward the write-rate budget. Bypasses the trashed-note guard — reverting to a non-trashed version will un-trash; reverting to a trashed version will re-trash.
+
+Recommended flow: `get_note_history` → `get_note_version` (to preview) → `revert_note`.
+
+**Parameters:**
+- `id` (string, required) — note ID
+- `version` (number, required) — target version to restore (positive integer)
+
+**Returns:** `{success, id, reverted_from_version, new_version, no_op}`. `no_op: true` means the target version was identical to current — no write was performed and no rate-budget consumed.
+
+Requires write-mode enabled in `simplenote-mcp setup`. Retention is determined by Simperium and not configurable from the client.
+
 ## Example usage
 
 Once configured, you can ask your AI client things like:
@@ -272,6 +306,9 @@ Once configured, you can ask your AI client things like:
 - "Search my notes for 'recipe'"
 - "Show notes tagged 'ideas'"
 - "Get the full content of note [id]"
+- "Show me the version history of [note title]"
+- "Show me what version 42 of that note looked like"
+- "Revert that note to the previous version"
 
 The server is read-only and does not modify your notes. Native macOS data is cached in memory and refreshed when the store file changes; Simperium API responses are cached for 60 seconds, with stale-cache fallback if the API is briefly unreachable.
 
