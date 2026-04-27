@@ -54,6 +54,16 @@ const TRASH_ANNOTATIONS = {
 	openWorldHint: true,
 } as const;
 
+// Restoring reverses a trash. Constructive, not destructive — if the model
+// restores the wrong note the user trashes it again. Idempotent: a second
+// call on an already-restored note is a no-op.
+const RESTORE_ANNOTATIONS = {
+	readOnlyHint: false,
+	destructiveHint: false,
+	idempotentHint: true,
+	openWorldHint: true,
+} as const;
+
 server.registerTool(
 	'list_tags',
 	{
@@ -88,14 +98,19 @@ server.registerTool(
 				.optional()
 				.default(20)
 				.describe('Max notes to return (0–100)'),
+			include_deleted: z
+				.boolean()
+				.optional()
+				.default(false)
+				.describe('Include trashed notes'),
 		},
 		annotations: READ_ONLY_ANNOTATIONS,
 	},
-	async ({ tag, limit }) => {
+	async ({ tag, limit, include_deleted }) => {
 		try {
 			const { notes } = await provider.loadStore();
 			const result = notes
-				.filter((n) => !n.deleted)
+				.filter((n) => include_deleted || !n.deleted)
 				.filter((n) => (tag ? n.tags.includes(tag) : true))
 				.map((n) => ({
 					id: n.id,
@@ -103,6 +118,7 @@ server.registerTool(
 					tags: n.tags,
 					pinned: n.pinned,
 					modified: n.modified,
+					deleted: n.deleted,
 				}))
 				.sort((a, b) => {
 					if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
@@ -456,6 +472,49 @@ if (provider.trashNote) {
 									id: trashed.id,
 									title: extractTitle(trashed.content),
 									trashed_at: trashed.modified,
+								},
+								null,
+								2,
+							),
+						},
+					],
+				};
+			} catch (err) {
+				return toolError(err);
+			}
+		},
+	);
+}
+
+if (provider.restoreNote) {
+	const restoreNote = provider.restoreNote.bind(provider);
+	server.registerTool(
+		'restore_note',
+		{
+			title: 'Restore Note',
+			description:
+				'Restore a previously-trashed note so it reappears in active lists. ' +
+				'Inverse of trash_note. ' +
+				'One note per call. ' +
+				'Requires write-mode enabled in `simplenote-mcp setup` and a provider that supports writes (Simperium API).',
+			inputSchema: {
+				id: z.string().describe('Note ID (simperiumkey) to restore'),
+			},
+			annotations: RESTORE_ANNOTATIONS,
+		},
+		async ({ id }) => {
+			try {
+				const restored = await restoreNote(id);
+				return {
+					content: [
+						{
+							type: 'text',
+							text: JSON.stringify(
+								{
+									success: true,
+									id: restored.id,
+									title: extractTitle(restored.content),
+									restored_at: restored.modified,
 								},
 								null,
 								2,
