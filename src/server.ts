@@ -45,6 +45,15 @@ const WRITE_ANNOTATIONS = {
 	openWorldHint: true,
 } as const;
 
+// Trashing is destructive but soft (recoverable from any Simplenote client)
+// and idempotent — a second call on an already-trashed note is a no-op.
+const TRASH_ANNOTATIONS = {
+	readOnlyHint: false,
+	destructiveHint: true,
+	idempotentHint: true,
+	openWorldHint: true,
+} as const;
+
 server.registerTool(
 	'list_tags',
 	{
@@ -408,6 +417,54 @@ if (provider.updateNote) {
 						},
 					],
 				};
+			}
+		},
+	);
+}
+
+if (provider.trashNote) {
+	const trashNote = provider.trashNote.bind(provider);
+	server.registerTool(
+		'trash_note',
+		{
+			title: 'Trash Note',
+			description:
+				'Move a note to the Simplenote trash. Soft-delete only — the note ' +
+				'stays in the bucket and can be restored from any Simplenote client. ' +
+				'One note per call. ' +
+				'Requires write-mode enabled in `simplenote-mcp setup` and a provider that supports writes (Simperium API).',
+			inputSchema: {
+				id: z.string().describe('Note ID (simperiumkey) to trash'),
+			},
+			annotations: TRASH_ANNOTATIONS,
+		},
+		async ({ id }) => {
+			try {
+				// Source of truth is the provider, which does a fresh GET — a
+				// cached pre-check here could lie in either direction (claim a
+				// restored-by-another-client note is still in trash, or claim a
+				// just-created note doesn't exist). 404s from the GET surface
+				// as ApiError('not_found') via toolError.
+				const trashed = await trashNote(id);
+				return {
+					content: [
+						{
+							type: 'text',
+							text: JSON.stringify(
+								{
+									success: true,
+									id: trashed.id,
+									title: extractTitle(trashed.content),
+									trashed_at: trashed.modified,
+								},
+								null,
+								2,
+							),
+						},
+					],
+				};
+			} catch (err) {
+				return toolError(err);
 			}
 		},
 	);
