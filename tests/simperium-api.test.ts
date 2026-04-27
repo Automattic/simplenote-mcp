@@ -1052,6 +1052,125 @@ describe('getNoteVersion', () => {
 	});
 });
 
+describe('getNoteHistory', () => {
+	it('returns entries sorted descending by version with code-point-safe previews', async () => {
+		const provider = createApiProvider();
+		captureFetch((url, init) => {
+			if (isRawNoteGet(url, init?.method) && url.endsWith('/note/i/note-1')) {
+				return rawNoteResponse(
+					{ content: 'current content', modificationDate: 1700000300 },
+					{ version: 3 },
+				);
+			}
+			const m = url.match(/\/note\/i\/note-1\/v\/(\d+)$/);
+			if (m) {
+				const v = Number(m[1]);
+				return new Response(
+					JSON.stringify({
+						content: `version-${v} content`,
+						modificationDate: 1700000000 + v * 100,
+					}),
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				);
+			}
+			throw new Error(`Unexpected fetch: ${init?.method} ${url}`);
+		});
+
+		const result = await provider.getNoteHistory!('note-1', 10);
+
+		assert.equal(result.id, 'note-1');
+		assert.equal(result.current_version, 3);
+		assert.equal(result.entries.length, 3);
+		assert.deepEqual(
+			result.entries.map((e) => e.version),
+			[3, 2, 1],
+		);
+		assert.equal(result.entries[0]!.content_preview, 'version-3 content');
+		assert.match(result.entries[0]!.modified_at!, /^2023-/);
+	});
+
+	it('truncates content_preview to 100 code points with a single-char ellipsis', async () => {
+		const provider = createApiProvider();
+		// 150 chars, all ASCII.
+		const longContent = 'x'.repeat(150);
+		captureFetch((url, init) => {
+			if (isRawNoteGet(url, init?.method)) {
+				return rawNoteResponse({ content: longContent }, { version: 1 });
+			}
+			if (/\/v\/1$/.test(url)) {
+				return new Response(
+					JSON.stringify({ content: longContent, modificationDate: 1700000000 }),
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				);
+			}
+			throw new Error(`Unexpected fetch: ${init?.method} ${url}`);
+		});
+
+		const result = await provider.getNoteHistory!('note-1', 5);
+
+		const preview = result.entries[0]!.content_preview;
+		assert.equal(Array.from(preview).length, 101);
+		assert.ok(preview.endsWith('…'));
+	});
+
+	it('handles multi-byte content without splitting code points', async () => {
+		const provider = createApiProvider();
+		// One ASCII char + 120 emoji misaligns the UTF-16 boundary at position 100:
+		// a naive `slice(0, 100)` would slice between the surrogate halves of the
+		// 50th emoji, producing an invalid string. Code-point-safe truncation
+		// must land on a complete emoji.
+		const mixedContent = 'a' + '😀'.repeat(120);
+		captureFetch((url, init) => {
+			if (isRawNoteGet(url, init?.method)) {
+				return rawNoteResponse({ content: mixedContent }, { version: 1 });
+			}
+			if (/\/v\/1$/.test(url)) {
+				return new Response(
+					JSON.stringify({ content: mixedContent, modificationDate: 1700000000 }),
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				);
+			}
+			throw new Error(`Unexpected fetch: ${init?.method} ${url}`);
+		});
+
+		const result = await provider.getNoteHistory!('note-1', 5);
+
+		const preview = result.entries[0]!.content_preview;
+		// 1 ASCII + 99 emoji + 1 ellipsis = 101 code points.
+		assert.equal(Array.from(preview).length, 101);
+		assert.equal(preview, 'a' + '😀'.repeat(99) + '…');
+	});
+
+	it('drops pruned versions silently (404), exposing the gap via version numbers', async () => {
+		const provider = createApiProvider();
+		captureFetch((url, init) => {
+			if (isRawNoteGet(url, init?.method) && url.endsWith('/note/i/note-1')) {
+				return rawNoteResponse({ content: 'curr' }, { version: 5 });
+			}
+			const m = url.match(/\/v\/(\d+)$/);
+			if (m) {
+				const v = Number(m[1]);
+				if (v === 3 || v === 2) {
+					return new Response('', { status: 404 });
+				}
+				return new Response(
+					JSON.stringify({ content: `v${v}`, modificationDate: 1700000000 }),
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				);
+			}
+			throw new Error(`Unexpected fetch: ${init?.method} ${url}`);
+		});
+
+		const result = await provider.getNoteHistory!('note-1', 5);
+
+		assert.equal(result.current_version, 5);
+		assert.deepEqual(
+			result.entries.map((e) => e.version),
+			[5, 4, 1],
+		);
+	});
+});
+
 // trashNote and restoreNote are mirror operations: each GETs the current
 // note, decides whether to POST a state-flipped copy, and otherwise behaves
 // the same on the wire (same URL shape, same headers, same error matrix,

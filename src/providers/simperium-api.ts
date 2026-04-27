@@ -361,6 +361,58 @@ class SimperiumApiProvider implements Provider {
 		const normalized = normalizeOrThrow(id, data);
 		return { ...normalized, version };
 	}
+
+	async getNoteHistory(id: string, limit: number): Promise<NoteHistoryResult> {
+		if (!Number.isInteger(limit) || limit < 1 || limit > 25) {
+			throw new ApiError(
+				'invalid_argument',
+				`Invalid limit ${limit}: must be an integer in [1, 25].`,
+			);
+		}
+		const auth = await loadToken();
+		if (!auth) {
+			throw new ApiError(
+				'no_token',
+				'Not logged in. Run `simplenote-mcp setup` to authenticate.',
+			);
+		}
+
+		const { version: currentVersion } = await fetchRawNote(id, auth.token);
+
+		if (currentVersion < 1) {
+			return { id, current_version: currentVersion, entries: [] };
+		}
+
+		const oldest = Math.max(1, currentVersion - limit + 1);
+		const versions: number[] = [];
+		for (let v = currentVersion; v >= oldest; v--) versions.push(v);
+
+		// TODO: If Simperium throttles us at higher concurrencies, wrap with a
+		// small p-limit-style pool (5-8). Unverified at present (RSM-1230 design).
+		const settled = await Promise.all(
+			versions.map(async (v) => {
+				try {
+					const data = await fetchNoteVersion(id, v, auth.token);
+					return { version: v, data };
+				} catch (err) {
+					if (err instanceof ApiError && err.code === 'version_not_found') {
+						return null;
+					}
+					throw err;
+				}
+			}),
+		);
+
+		const entries: NoteVersionEntry[] = settled
+			.filter((entry): entry is { version: number; data: Record<string, unknown> } => entry !== null)
+			.map(({ version, data }) => ({
+				version,
+				modified_at: toIsoFromUnix(data.modificationDate),
+				content_preview: buildContentPreview(data.content),
+			}));
+
+		return { id, current_version: currentVersion, entries };
+	}
 }
 
 // Centralizes auth header, timeout, and the universal status mappings shared
@@ -699,6 +751,17 @@ function toIsoFromUnix(value: unknown): string | null {
 		typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
 	if (!Number.isFinite(num)) return null;
 	return new Date(num * 1000).toISOString();
+}
+
+const HISTORY_PREVIEW_MAX_CODE_POINTS = 100;
+const HISTORY_PREVIEW_ELLIPSIS = '…';
+
+function buildContentPreview(content: unknown): string {
+	if (typeof content !== 'string') return '';
+	const cps = Array.from(content);
+	return cps.length > HISTORY_PREVIEW_MAX_CODE_POINTS
+		? cps.slice(0, HISTORY_PREVIEW_MAX_CODE_POINTS).join('') + HISTORY_PREVIEW_ELLIPSIS
+		: content;
 }
 
 export const _test = {
