@@ -578,6 +578,45 @@ if (provider.getNoteVersion) {
 	);
 }
 
+if (provider.getNoteHistory) {
+	const getNoteHistory = provider.getNoteHistory.bind(provider);
+	server.registerTool(
+		'get_note_history',
+		{
+			title: 'Get Note History',
+			description:
+				'List recent versions of a note with short content previews. Read-only. ' +
+				'Entries are sorted current-first; entry[1] is the previous version. ' +
+				'Versions outside Simperium\'s retention window are silently dropped — ' +
+				'check entry.version numbers for non-contiguity.',
+			inputSchema: {
+				id: z.string().min(1).describe('Note ID'),
+				limit: z
+					.number()
+					.int()
+					.min(1)
+					.max(25)
+					.optional()
+					.default(10)
+					.describe('Max versions to return (1–25)'),
+			},
+			annotations: READ_ONLY_ANNOTATIONS,
+		},
+		async ({ id, limit }) => {
+			try {
+				const history = await getNoteHistory(id, limit);
+				return {
+					content: [
+						{ type: 'text', text: JSON.stringify(history, null, 2) },
+					],
+				};
+			} catch (err) {
+				return toolError(err);
+			}
+		},
+	);
+}
+
 const transport = new StdioServerTransport();
 await server.connect(transport);
 
