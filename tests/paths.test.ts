@@ -1,6 +1,11 @@
 import { describe, it } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { getConfigDir, getConfigPath, getTokenPath } from '../src/providers/paths.ts';
+import {
+	getConfigDir,
+	getConfigPath,
+	getTelemetryPath,
+	getTokenPath,
+} from '../src/providers/paths.ts';
 
 describe('getConfigDir', () => {
 	it('uses Library/Application Support on darwin', () => {
@@ -125,5 +130,19 @@ describe('getConfigPath', () => {
 		assert.ok(path.includes('AppData'));
 		assert.ok(path.includes('Roaming'));
 		assert.ok(path.endsWith('simplenote-mcp/config.json') || path.endsWith('simplenote-mcp\\config.json'));
+	});
+});
+
+describe('getTelemetryPath', () => {
+	it('appends telemetry.json to the config dir', () => {
+		const path = getTelemetryPath({
+			platform: 'darwin',
+			homedir: '/Users/alice',
+			env: {},
+		});
+		assert.equal(
+			path,
+			'/Users/alice/Library/Application Support/simplenote-mcp/telemetry.json',
+		);
 	});
 });
