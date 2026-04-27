@@ -468,7 +468,7 @@ if (provider.trashNote) {
 			},
 			annotations: TRASH_ANNOTATIONS,
 		},
-		async ({ id }) => {
+		trackedTool('trash_note', async ({ id }) => {
 			try {
 				// Source of truth is the provider, which does a fresh GET — a
 				// cached pre-check here could lie in either direction (claim a
@@ -496,7 +496,7 @@ if (provider.trashNote) {
 			} catch (err) {
 				return toolError(err);
 			}
-		},
+		}),
 	);
 }
 
@@ -516,7 +516,7 @@ if (provider.restoreNote) {
 			},
 			annotations: RESTORE_ANNOTATIONS,
 		},
-		async ({ id }) => {
+		trackedTool('restore_note', async ({ id }) => {
 			try {
 				const restored = await restoreNote(id);
 				return {
@@ -539,7 +539,7 @@ if (provider.restoreNote) {
 			} catch (err) {
 				return toolError(err);
 			}
-		},
+		}),
 	);
 }
 
