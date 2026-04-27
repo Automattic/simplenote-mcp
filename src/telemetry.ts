@@ -9,6 +9,7 @@ import { getTelemetryPath } from './providers/paths.js';
 export const TELEMETRY_USER_TYPE = 'simplenote_mcp';
 const TELEMETRY_EVENT_PREFIX = 'simplenote_mcp';
 const DISABLE_ENV_VAR = 'SIMPLENOTE_MCP_DISABLE_TELEMETRY';
+const TRACKS_EVENT_TIMEOUT_MS = 1500;
 
 export type SetupTelemetryType = 'local' | 'api';
 export type SetupTelemetryEnv = 'mac' | 'windows' | 'linux';
@@ -51,7 +52,9 @@ type TelemetryState = {
 type NodeTracksFactory = (
 	prefix: string,
 	globalParams: ParsedUrlQueryInput,
-) => {
+) => NodeTracks;
+
+type NodeTracks = {
 	trackEvent(
 		eventName: string,
 		extraParams?: ParsedUrlQueryInput,
@@ -191,12 +194,20 @@ function createNodeTracksClient(userId: string): TelemetryClient {
 		_ut: TELEMETRY_USER_TYPE,
 		_ui: userId,
 	});
+	return createTracksTelemetryClient(tracks);
+}
+
+function createTracksTelemetryClient(
+	tracks: NodeTracks,
+	timeoutMs = TRACKS_EVENT_TIMEOUT_MS,
+): TelemetryClient {
 	return {
 		async trackEvent(eventName, props = {}) {
 			try {
-				void tracks
-					.trackEvent(eventName, toTracksParams(props), NOOP_TRACKS_LOGGER)
-					.catch(() => {});
+				await withTimeout(
+					tracks.trackEvent(eventName, toTracksParams(props), NOOP_TRACKS_LOGGER),
+					timeoutMs,
+				);
 			} catch {
 				// Defensive: keep telemetry failures isolated from callers.
 			}
@@ -226,6 +237,18 @@ async function safeTrack(
 		await client.trackEvent(eventName, props);
 	} catch {
 		// Telemetry must never affect the MCP command or tool result.
+	}
+}
+
+async function withTimeout(promise: Promise<void>, timeoutMs: number): Promise<void> {
+	let timeout: ReturnType<typeof setTimeout> | undefined;
+	const timeoutPromise = new Promise<void>((resolve) => {
+		timeout = setTimeout(resolve, timeoutMs);
+	});
+	try {
+		await Promise.race([promise, timeoutPromise]);
+	} finally {
+		if (timeout) clearTimeout(timeout);
 	}
 }
 
@@ -301,4 +324,8 @@ const NOOP_TRACKS_LOGGER = {
 	warn() {},
 };
 
-export const _test = { toTracksParams, loadTelemetryState };
+export const _test = {
+	createTracksTelemetryClient,
+	loadTelemetryState,
+	toTracksParams,
+};

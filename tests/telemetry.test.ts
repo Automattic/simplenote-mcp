@@ -3,6 +3,7 @@ import { strict as assert } from 'node:assert';
 import { readFile, stat, writeFile } from 'node:fs/promises';
 import {
 	TELEMETRY_USER_TYPE,
+	_test,
 	createTelemetry,
 	disableTelemetry,
 	ensureTelemetryUserId,
@@ -139,6 +140,51 @@ describe('createTelemetry', () => {
 		]);
 	});
 
+	it('waits for node-tracks event promises before resolving', async () => {
+		let resolveSend: (() => void) | undefined;
+		const sent: { eventName: string; props: unknown }[] = [];
+		const client = _test.createTracksTelemetryClient(
+			{
+				async trackEvent(eventName, props) {
+					sent.push({ eventName, props });
+					await new Promise<void>((resolve) => {
+						resolveSend = resolve;
+					});
+				},
+			},
+			100,
+		);
+
+		let resolved = false;
+		const pending = client
+			.trackEvent('setup', { type: 'api', ignored: undefined })
+			.then(() => {
+				resolved = true;
+			});
+
+		await Promise.resolve();
+		assert.equal(resolved, false);
+		assert.deepEqual(sent, [{ eventName: 'setup', props: { type: 'api' } }]);
+
+		if (!resolveSend) throw new Error('Expected telemetry send to start');
+		resolveSend();
+		await pending;
+		assert.equal(resolved, true);
+	});
+
+	it('stops waiting for node-tracks event promises after the timeout', async () => {
+		const client = _test.createTracksTelemetryClient(
+			{
+				async trackEvent() {
+					await new Promise<void>(() => {});
+				},
+			},
+			1,
+		);
+
+		await client.trackEvent('setup');
+	});
+
 	it('returns a no-op telemetry object when disabled by env var', async () => {
 		let clientCalls = 0;
 		const telemetryPath = tmp.path('telemetry.json');
@@ -223,6 +269,44 @@ describe('makeTrackedToolHandler', () => {
 		assert.deepEqual(calls, [
 			{ tool: 'search_notes', provider: 'simperium-api', success: false },
 		]);
+	});
+
+	it('does not wait for tool telemetry before returning the tool result', async () => {
+		let releaseTrack: (() => void) | undefined;
+		let finishTrack: (() => void) | undefined;
+		const telemetryFinished = new Promise<void>((resolve) => {
+			finishTrack = resolve;
+		});
+		const telemetry: Telemetry = {
+			async trackSetup() {},
+			async trackToolCall() {
+				await new Promise<void>((resolve) => {
+					releaseTrack = resolve;
+				});
+				finishTrack?.();
+			},
+		};
+		const trackTool = makeTrackedToolHandler(telemetry, () => 'native-macos');
+		let timeout: ReturnType<typeof setTimeout> | undefined;
+		try {
+			const result = await Promise.race([
+				trackTool('list_notes', async () => 'done'),
+				new Promise<never>((_, reject) => {
+					timeout = setTimeout(
+						() => reject(new Error('Tool handler waited for telemetry')),
+						100,
+					);
+				}),
+			]);
+
+			assert.equal(result, 'done');
+		} finally {
+			if (timeout) clearTimeout(timeout);
+		}
+
+		if (!releaseTrack) throw new Error('Expected tool telemetry to start');
+		releaseTrack();
+		await telemetryFinished;
 	});
 });
 
