@@ -19,6 +19,13 @@ const API_BASE = 'https://api.simperium.com/1';
 const CACHE_TTL_MS = 60_000;
 const FETCH_TIMEOUT_MS = 30_000;
 
+// Rolling-window cap on successful writes across all write tools. Catches
+// runaway bulk loops (e.g. "blank every note") by forcing the LLM back to
+// the user after a burst. Only successful writes count; failed writes
+// leave the budget untouched.
+const WRITE_RATE_WINDOW_MS = 30_000;
+const WRITE_RATE_MAX = 5;
+
 export type ApiErrorCode =
 	| 'no_token'
 	| 'unauthorized'
@@ -27,7 +34,8 @@ export type ApiErrorCode =
 	| 'invalid_response'
 	| 'not_found'
 	| 'note_in_trash'
-	| 'empty_content';
+	| 'empty_content'
+	| 'rate_limited';
 
 export class ApiError extends Error {
 	readonly code: ApiErrorCode;
@@ -55,6 +63,28 @@ class SimperiumApiProvider implements Provider {
 	readonly name = 'simperium-api' as const;
 	readonly description = `Simperium API (app_id=${APP_ID})`;
 	private cache: { fetchedAt: number; data: NormalizedStore } | null = null;
+	private writeTimestamps: number[] = [];
+
+	// Refuse the call if the rolling window has already seen WRITE_RATE_MAX
+	// successful writes. Older timestamps age out passively — no explicit
+	// acknowledgment mechanism. Called immediately before each POST so
+	// state-based early-returns (no-op, already-trashed, already-restored)
+	// surface their specific errors instead of a generic rate_limited.
+	private checkWriteRate(): void {
+		const now = Date.now();
+		const windowStart = now - WRITE_RATE_WINDOW_MS;
+		this.writeTimestamps = this.writeTimestamps.filter((t) => t >= windowStart);
+		if (this.writeTimestamps.length >= WRITE_RATE_MAX) {
+			throw new ApiError(
+				'rate_limited',
+				`Paused after ${WRITE_RATE_MAX} writes in ${WRITE_RATE_WINDOW_MS / 1000} seconds. Confirm with the user that this bulk operation should continue before retrying.`,
+			);
+		}
+	}
+
+	private recordWrite(): void {
+		this.writeTimestamps.push(Date.now());
+	}
 
 	async loadStore(): Promise<NormalizedStore> {
 		if (this.cache && Date.now() - this.cache.fetchedAt < CACHE_TTL_MS) {
@@ -108,6 +138,8 @@ class SimperiumApiProvider implements Provider {
 	}
 
 	async createNote(input: NoteCreateInput): Promise<NoteCreateResult> {
+		this.checkWriteRate();
+
 		const auth = await loadToken();
 		if (!auth) {
 			throw new ApiError(
@@ -137,6 +169,8 @@ class SimperiumApiProvider implements Provider {
 		};
 
 		const result = await postNote(noteId, noteData, auth.token);
+
+		this.recordWrite();
 
 		// Invalidate cache so subsequent reads see the new note
 		this.clearCache();
@@ -185,6 +219,8 @@ class SimperiumApiProvider implements Provider {
 			return { id: input.id, version: existingVersion };
 		}
 
+		this.checkWriteRate();
+
 		// undefined toggles preserve existing flags; explicit true/false sets them.
 		const systemTags = mergeSystemTags(existingSystemTags, {
 			markdown: input.markdown,
@@ -200,6 +236,8 @@ class SimperiumApiProvider implements Provider {
 		if (input.tags !== undefined) noteData.tags = input.tags;
 
 		const result = await postNote(input.id, noteData, auth.token, 'update');
+
+		this.recordWrite();
 
 		// Invalidate cache so subsequent reads see the updated note
 		this.clearCache();
@@ -231,6 +269,8 @@ class SimperiumApiProvider implements Provider {
 			return normalizeOrThrow(id, existing);
 		}
 
+		this.checkWriteRate();
+
 		const nowUnix = Math.floor(Date.now() / 1000);
 		const noteData: Record<string, unknown> = {
 			...existing,
@@ -247,6 +287,7 @@ class SimperiumApiProvider implements Provider {
 			context: 'trashing note',
 		});
 
+		this.recordWrite();
 		this.clearCache();
 		return normalizeOrThrow(id, noteData);
 	}
@@ -272,6 +313,8 @@ class SimperiumApiProvider implements Provider {
 			return normalizeOrThrow(id, existing);
 		}
 
+		this.checkWriteRate();
+
 		const nowUnix = Math.floor(Date.now() / 1000);
 		const noteData: Record<string, unknown> = {
 			...existing,
@@ -288,6 +331,7 @@ class SimperiumApiProvider implements Provider {
 			context: 'restoring note',
 		});
 
+		this.recordWrite();
 		this.clearCache();
 		return normalizeOrThrow(id, noteData);
 	}
