@@ -1535,6 +1535,168 @@ describe('restoreNote', () => {
 	});
 });
 
+// ---------- write rate cap ----------
+
+describe('write rate cap', () => {
+	afterEach(() => mock.timers.reset());
+
+	it('refuses the 6th write within a 30-second window with ApiError(rate_limited)', async () => {
+		mock.timers.enable({ apis: ['Date'] });
+		const provider = createApiProvider();
+		let postCount = 0;
+
+		mockFetch(async (url: string, opts?: RequestInit) => {
+			if (isNotePost(opts?.method)) {
+				postCount++;
+				return new Response('1', { status: 200 });
+			}
+			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
+		});
+
+		for (let i = 0; i < 5; i++) {
+			await provider.createNote!({ content: `note ${i}` });
+		}
+		assert.equal(postCount, 5);
+
+		await assert.rejects(
+			() => provider.createNote!({ content: 'sixth' }),
+			(err: unknown) =>
+				err instanceof ApiError &&
+				err.code === 'rate_limited' &&
+				err.message.includes('5 writes in 30 seconds') &&
+				err.message.includes('Confirm with the user'),
+		);
+		assert.equal(postCount, 5, 'rate-limited call should not POST');
+	});
+
+	it('allows another write after older timestamps age out of the window', async () => {
+		mock.timers.enable({ apis: ['Date'] });
+		const provider = createApiProvider();
+		let postCount = 0;
+
+		mockFetch(async (_url: string, opts?: RequestInit) => {
+			if (isNotePost(opts?.method)) {
+				postCount++;
+				return new Response('1', { status: 200 });
+			}
+			throw new Error('unexpected fetch');
+		});
+
+		for (let i = 0; i < 5; i++) {
+			await provider.createNote!({ content: `note ${i}` });
+		}
+
+		// Advance past the 30s rolling window so all 5 timestamps age out.
+		mock.timers.tick(31_000);
+
+		await provider.createNote!({ content: 'after window' });
+		assert.equal(postCount, 6);
+	});
+
+	it('shares a single counter across createNote and updateNote', async () => {
+		mock.timers.enable({ apis: ['Date'] });
+		const provider = createApiProvider();
+		let postCount = 0;
+
+		mockFetch(async (url: string, opts?: RequestInit) => {
+			if (isRawNoteGet(url, opts?.method)) {
+				return rawNoteResponse({ content: 'existing' });
+			}
+			if (isNotePost(opts?.method)) {
+				postCount++;
+				return new Response('2', { status: 200 });
+			}
+			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
+		});
+
+		await provider.createNote!({ content: 'a' });
+		await provider.updateNote!({ id: 'x1', content: 'b' });
+		await provider.createNote!({ content: 'c' });
+		await provider.updateNote!({ id: 'x2', content: 'd' });
+		await provider.createNote!({ content: 'e' });
+		assert.equal(postCount, 5);
+
+		await assert.rejects(
+			() => provider.updateNote!({ id: 'x3', content: 'f' }),
+			(err: unknown) => err instanceof ApiError && err.code === 'rate_limited',
+		);
+		await assert.rejects(
+			() => provider.createNote!({ content: 'g' }),
+			(err: unknown) => err instanceof ApiError && err.code === 'rate_limited',
+		);
+		assert.equal(postCount, 5, 'neither tool should POST once the cap is hit');
+	});
+
+	it('does not consume budget when the POST fails', async () => {
+		mock.timers.enable({ apis: ['Date'] });
+		const provider = createApiProvider();
+		let attempts = 0;
+
+		mockFetch(async (_url: string, opts?: RequestInit) => {
+			if (isNotePost(opts?.method)) {
+				attempts++;
+				// Fail the first 5 attempts with 500, succeed afterwards.
+				if (attempts <= 5) return new Response('', { status: 500 });
+				return new Response('1', { status: 200 });
+			}
+			throw new Error('unexpected fetch');
+		});
+
+		for (let i = 0; i < 5; i++) {
+			await assert.rejects(
+				() => provider.createNote!({ content: `fail ${i}` }),
+				(err: unknown) => err instanceof ApiError && err.code === 'request_failed',
+			);
+		}
+
+		// None of the 5 failed writes should have consumed budget; all 5 of
+		// the next batch should go through without hitting the cap.
+		for (let i = 0; i < 5; i++) {
+			await provider.createNote!({ content: `ok ${i}` });
+		}
+		assert.equal(attempts, 10);
+	});
+
+	it('counts trashNote and restoreNote toward the same budget', async () => {
+		mock.timers.enable({ apis: ['Date'] });
+		const provider = createApiProvider();
+		let postCount = 0;
+		// Toggle the deleted flag returned by GET so trash/restore alternately
+		// see the "needs to POST" branch instead of short-circuiting.
+		let getCount = 0;
+
+		mockFetch(async (url: string, opts?: RequestInit) => {
+			if (isRawNoteGet(url, opts?.method)) {
+				const deleted = getCount % 2 === 1;
+				getCount++;
+				return rawNoteResponse({ content: 'x', deleted });
+			}
+			if (isNotePost(opts?.method)) {
+				postCount++;
+				return new Response('2', { status: 200 });
+			}
+			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
+		});
+
+		await provider.createNote!({ content: 'a' });
+		await provider.trashNote!('n1'); // GET sees deleted:false → POSTs trash
+		await provider.restoreNote!('n2'); // GET sees deleted:true → POSTs restore
+		await provider.trashNote!('n3');
+		await provider.restoreNote!('n4');
+		assert.equal(postCount, 5);
+
+		await assert.rejects(
+			() => provider.trashNote!('n5'),
+			(err: unknown) => err instanceof ApiError && err.code === 'rate_limited',
+		);
+		await assert.rejects(
+			() => provider.restoreNote!('n6'),
+			(err: unknown) => err instanceof ApiError && err.code === 'rate_limited',
+		);
+		assert.equal(postCount, 5, 'trashNote and restoreNote share the budget');
+	});
+});
+
 // ---------- provider.loadStore caching ----------
 
 describe('loadStore stale-cache fallback', () => {
