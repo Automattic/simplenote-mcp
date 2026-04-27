@@ -30,7 +30,7 @@ body:
     attributes:
       label: Provider
       options:
-        - Native macOS app store
+        - Local Simplenote macOS app (Core Data store)
         - Simperium API
         - Not sure
     validations:
