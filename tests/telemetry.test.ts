@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { readFile, stat } from 'node:fs/promises';
+import { readFile, stat, writeFile } from 'node:fs/promises';
 import {
 	TELEMETRY_USER_TYPE,
 	createTelemetry,
@@ -54,6 +54,13 @@ describe('telemetry identity', () => {
 		const state = JSON.parse(await readFile(telemetryPath, 'utf-8'));
 		assert.deepEqual(state, { userId, disabled: true });
 	});
+
+	it('treats invalid telemetry state as disabled', async () => {
+		const telemetryPath = tmp.path('telemetry.json');
+		await writeFile(telemetryPath, '{not json');
+
+		assert.equal(await isTelemetryDisabled({ telemetryPath }), true);
+	});
 });
 
 describe('createTelemetry', () => {
@@ -73,6 +80,7 @@ describe('createTelemetry', () => {
 
 		const telemetry = await createTelemetry({
 			telemetryPath,
+			env: {},
 			createClient: (userId) => ({
 				async trackEvent(eventName, props) {
 					events.push({ userId, eventName, props });
@@ -105,6 +113,7 @@ describe('createTelemetry', () => {
 
 		const telemetry = await createTelemetry({
 			telemetryPath,
+			env: {},
 			createClient: () => ({
 				async trackEvent(eventName, props) {
 					events.push({ eventName, props });

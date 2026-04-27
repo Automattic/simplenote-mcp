@@ -253,19 +253,19 @@ async function loadTelemetryState(path: string): Promise<TelemetryState> {
 		raw = await readFile(path, 'utf-8');
 	} catch (err) {
 		if ((err as NodeJS.ErrnoException).code === 'ENOENT') return {};
-		throw err;
+		return { disabled: true };
 	}
 
 	try {
 		const parsed: unknown = JSON.parse(raw);
-		if (!parsed || typeof parsed !== 'object') return {};
+		if (!parsed || typeof parsed !== 'object') return { disabled: true };
 		const obj = parsed as Record<string, unknown>;
 		return {
 			userId: typeof obj.userId === 'string' ? obj.userId : undefined,
 			disabled: typeof obj.disabled === 'boolean' ? obj.disabled : undefined,
 		};
 	} catch {
-		return {};
+		return { disabled: true };
 	}
 }
 
