@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
-import type { ClientRequest } from 'node:http';
 import { createRequire } from 'node:module';
 import { platform } from 'node:os';
 import { dirname } from 'node:path';
@@ -10,7 +9,6 @@ import { getTelemetryPath } from './providers/paths.js';
 export const TELEMETRY_USER_TYPE = 'simplenote_mcp';
 const TELEMETRY_EVENT_PREFIX = 'simplenote_mcp';
 const DISABLE_ENV_VAR = 'SIMPLENOTE_MCP_DISABLE_TELEMETRY';
-const TRACKS_REQUEST_TIMEOUT_MS = 1_500;
 
 export type SetupTelemetryType = 'local' | 'api';
 export type SetupTelemetryEnv = 'mac' | 'windows' | 'linux';
@@ -40,7 +38,6 @@ export type TelemetryClient = {
 export type TelemetryOptions = {
 	telemetryPath?: string;
 	env?: NodeJS.ProcessEnv;
-	platform?: NodeJS.Platform;
 	createClient?: (userId: string) => TelemetryClient;
 };
 
@@ -62,12 +59,7 @@ type NodeTracksFactory = (
 	): Promise<void>;
 };
 
-type HttpsModule = {
-	get: (...args: unknown[]) => ClientRequest;
-};
-
 const require = createRequire(import.meta.url);
-const https = require('node:https') as HttpsModule;
 
 export const NOOP_TELEMETRY: Telemetry = {
 	async trackSetup() {},
@@ -201,31 +193,15 @@ function createNodeTracksClient(userId: string): TelemetryClient {
 	});
 	return {
 		async trackEvent(eventName, props = {}) {
-			startTracksEvent(() => {
-				void tracks.trackEvent(
-					eventName,
-					toTracksParams(props),
-					NOOP_TRACKS_LOGGER,
-				);
-			});
+			try {
+				void tracks
+					.trackEvent(eventName, toTracksParams(props), NOOP_TRACKS_LOGGER)
+					.catch(() => {});
+			} catch {
+				// Defensive: keep telemetry failures isolated from callers.
+			}
 		},
 	};
-}
-
-function startTracksEvent(fn: () => void): void {
-	const originalGet = https.get;
-	https.get = (...args) => {
-		const req = originalGet(...args);
-		req.on('error', () => {});
-		req.setTimeout(TRACKS_REQUEST_TIMEOUT_MS, () => req.destroy());
-		return req;
-	};
-
-	try {
-		fn();
-	} finally {
-		https.get = originalGet;
-	}
 }
 
 function loadNodeTracks(): NodeTracksFactory {
