@@ -424,6 +424,47 @@ async function fetchRawNote(
 	return { data: body as Record<string, unknown>, version };
 }
 
+async function fetchNoteVersion(
+	noteId: string,
+	version: number,
+	token: string,
+): Promise<Record<string, unknown>> {
+	const res = await simperiumRequest({
+		method: 'GET',
+		path: `/note/i/${encodeURIComponent(noteId)}/v/${version}`,
+		token,
+		context: 'fetching note version',
+		passthroughStatus: [404],
+	});
+	if (res.status === 404) {
+		// 404 here can mean either (a) the note exists but this specific
+		// version is outside Simperium's retention window, or (b) the note
+		// itself doesn't exist. Callers that want to disambiguate can
+		// verify note existence via fetchRawNote first.
+		throw new ApiError(
+			'version_not_found',
+			`Version ${version} of note ${noteId} not available; it may not exist or may be outside Simperium's retention window.`,
+			404,
+		);
+	}
+	let body: unknown;
+	try {
+		body = await res.json();
+	} catch {
+		throw new ApiError(
+			'invalid_response',
+			'Simperium note version returned invalid JSON.',
+		);
+	}
+	if (!body || typeof body !== 'object') {
+		throw new ApiError(
+			'invalid_response',
+			'Simperium note version response was not a JSON object.',
+		);
+	}
+	return body as Record<string, unknown>;
+}
+
 async function postNote(
 	noteId: string,
 	data: Record<string, unknown>,
@@ -642,4 +683,5 @@ export const _test = {
 	toIsoFromUnix,
 	mergeSystemTags,
 	simperiumRequest,
+	fetchNoteVersion,
 };

@@ -3,14 +3,22 @@ import { strict as assert } from 'node:assert';
 import { ApiError, createApiProvider, _test } from '../src/providers/simperium-api.ts';
 import { captureFetch, mockFetch, useEnvVar } from './helpers/general.ts';
 import {
+	captureFetch,
 	emptyIndexResponse,
 	isNotePost,
 	isRawNoteGet,
 	rawNoteResponse,
 } from './helpers/simperium.ts';
 
-const { normalizeNote, normalizeTag, toBool, toIsoFromUnix, mergeSystemTags, simperiumRequest } =
-	_test;
+const {
+	normalizeNote,
+	normalizeTag,
+	toBool,
+	toIsoFromUnix,
+	mergeSystemTags,
+	simperiumRequest,
+	fetchNoteVersion,
+} = _test;
 
 // Pin SIMPLENOTE_TOKEN to a known value per test, and reset mocks afterwards.
 // Harmless for the pure-helper suites below (which don't make HTTP calls).
@@ -316,6 +324,47 @@ describe('simperiumRequest', () => {
 				}),
 			(err: unknown) => err instanceof ApiError && err.code === 'unauthorized',
 		);
+	});
+});
+
+// ---------- fetchNoteVersion ----------
+
+describe('fetchNoteVersion', () => {
+	it('GETs /note/i/{id}/v/{version} and returns the body', async () => {
+		const captured = captureFetch((url) => {
+			if (/\/note\/i\/abc\/v\/3$/.test(url)) {
+				return new Response(
+					JSON.stringify({ content: 'old text', tags: ['t'] }),
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				);
+			}
+			throw new Error(`Unexpected fetch: ${url}`);
+		});
+
+		const result = await fetchNoteVersion('abc', 3, 'test-token');
+
+		assert.equal(result.content, 'old text');
+		assert.deepEqual(result.tags, ['t']);
+		assert.equal(captured.calls.length, 1);
+		assert.match(captured.calls[0]!.url, /\/note\/i\/abc\/v\/3$/);
+	});
+
+	it('throws ApiError(version_not_found) on 404', async () => {
+		captureFetch(() => new Response('', { status: 404 }));
+		await assert.rejects(
+			() => fetchNoteVersion('abc', 999, 'test-token'),
+			(err: ApiError) =>
+				err instanceof ApiError &&
+				err.code === 'version_not_found' &&
+				err.message.includes('999') &&
+				err.message.includes('abc'),
+		);
+	});
+
+	it('URL-encodes the note id', async () => {
+		const captured = captureFetch(() => new Response('{}', { status: 200 }));
+		await fetchNoteVersion('../tag/i/x', 1, 't');
+		assert.ok(captured.calls[0]!.url.endsWith('/note/i/..%2Ftag%2Fi%2Fx/v/1'));
 	});
 });
 
