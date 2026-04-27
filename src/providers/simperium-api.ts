@@ -414,6 +414,9 @@ class SimperiumApiProvider implements Provider {
 		return { id, current_version: currentVersion, entries };
 	}
 
+	// Unlike updateNote, revertNote does not reject when the current note is
+	// trashed — un-trash (revert to a non-trashed version) and re-trash
+	// (revert to a trashed version) are both legitimate recovery flows.
 	async revertNote(input: NoteRevertInput): Promise<NoteRevertResult> {
 		if (!Number.isInteger(input.version) || input.version < 1) {
 			throw new ApiError(
