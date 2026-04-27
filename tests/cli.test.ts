@@ -497,4 +497,20 @@ describe('disableTelemetryCommand', () => {
 		assert.deepEqual(JSON.parse(raw), { disabled: true });
 		assert.ok(out.lines.some((l) => /Telemetry disabled/.test(l)));
 	});
+
+	it('returns 1 with a helpful message when opt-out cannot be saved', async () => {
+		const err = captureConsole('error');
+		let exitCode: number;
+		try {
+			exitCode = await disableTelemetryCommand({
+				telemetryPath: tmp.dir,
+			});
+		} finally {
+			err.restore();
+		}
+
+		assert.equal(exitCode, 1);
+		assert.ok(err.lines.some((l) => /Failed to disable telemetry/.test(l)));
+		assert.ok(err.lines.some((l) => /settings path is writable/.test(l)));
+	});
 });

@@ -215,9 +215,16 @@ async function logoutCommand(): Promise<number> {
 async function disableTelemetryCommand(opts: {
 	telemetryPath?: string;
 } = {}): Promise<number> {
-	const path = await disableTelemetry({ telemetryPath: opts.telemetryPath });
-	console.log(`Telemetry disabled. Stored preference at ${path}.`);
-	return 0;
+	try {
+		const path = await disableTelemetry({ telemetryPath: opts.telemetryPath });
+		console.log(`Telemetry disabled. Stored preference at ${path}.`);
+		return 0;
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		console.error(`Failed to disable telemetry: ${message}`);
+		console.error('Check that the telemetry settings path is writable and try again.');
+		return 1;
+	}
 }
 
 async function trackSetup(
