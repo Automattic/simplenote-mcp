@@ -16,6 +16,7 @@
     "build": "tsc && shx chmod +x dist/server.js",
     "typecheck": "tsc --noEmit",
     "prepare": "npm run build",
+    "inspect": "npx @modelcontextprotocol/inspector node dist/server.js",
     "test": "node --import tsx --test \"tests/**/*.test.ts\""
   },
   "keywords": [
