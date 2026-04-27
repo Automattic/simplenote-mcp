@@ -1169,6 +1169,136 @@ describe('getNoteHistory', () => {
 			[5, 4, 1],
 		);
 	});
+
+	it('returns entries: [] when current_version is 0 (defensive short-circuit)', async () => {
+		const provider = createApiProvider();
+		let versionFetches = 0;
+		captureFetch((url, init) => {
+			if (isRawNoteGet(url, init?.method)) {
+				return rawNoteResponse({ content: 'x' }, { version: 0 });
+			}
+			if (/\/v\/\d+$/.test(url)) {
+				versionFetches++;
+				return new Response('{}', { status: 200 });
+			}
+			throw new Error(`Unexpected fetch: ${init?.method} ${url}`);
+		});
+
+		const result = await provider.getNoteHistory!('note-1', 10);
+
+		assert.equal(result.current_version, 0);
+		assert.deepEqual(result.entries, []);
+		assert.equal(versionFetches, 0);
+	});
+
+	it('returns entries for a trashed note including pre-trash versions', async () => {
+		const provider = createApiProvider();
+		captureFetch((url, init) => {
+			if (isRawNoteGet(url, init?.method)) {
+				return rawNoteResponse(
+					{ content: 'trashed now', deleted: true, modificationDate: 1700000300 },
+					{ version: 3 },
+				);
+			}
+			const m = url.match(/\/v\/(\d+)$/);
+			if (m) {
+				const v = Number(m[1]);
+				return new Response(
+					JSON.stringify({
+						content: `v${v}`,
+						deleted: v === 3, // only the latest version is trashed
+						modificationDate: 1700000000 + v * 100,
+					}),
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				);
+			}
+			throw new Error(`Unexpected fetch: ${init?.method} ${url}`);
+		});
+
+		const result = await provider.getNoteHistory!('note-1', 10);
+
+		assert.equal(result.entries.length, 3);
+		// No deleted/state filtering — caller can inspect previews if needed.
+	});
+
+	it('exposes null modified_at when the version body lacks modificationDate', async () => {
+		const provider = createApiProvider();
+		captureFetch((url, init) => {
+			if (isRawNoteGet(url, init?.method)) {
+				return rawNoteResponse({ content: 'x' }, { version: 1 });
+			}
+			if (/\/v\/1$/.test(url)) {
+				return new Response(
+					JSON.stringify({ content: 'no-date' }), // no modificationDate
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				);
+			}
+			throw new Error(`Unexpected fetch: ${init?.method} ${url}`);
+		});
+
+		const result = await provider.getNoteHistory!('note-1', 5);
+
+		assert.equal(result.entries[0]!.modified_at, null);
+	});
+
+	it('rejects out-of-range limit before any fetch', async () => {
+		const provider = createApiProvider();
+		let fetched = false;
+		mockFetch(async () => {
+			fetched = true;
+			return new Response('{}', { status: 200 });
+		});
+		await assert.rejects(() => provider.getNoteHistory!('note-1', 0));
+		await assert.rejects(() => provider.getNoteHistory!('note-1', 26));
+		await assert.rejects(() => provider.getNoteHistory!('note-1', 1.5));
+		assert.equal(fetched, false);
+	});
+
+	it('does not consume the write budget', async () => {
+		const provider = createApiProvider();
+		captureFetch((url, init) => {
+			if (isRawNoteGet(url, init?.method)) {
+				return rawNoteResponse({ content: 'orig' }, { version: 1 });
+			}
+			if (isNotePost(init?.method)) {
+				return new Response('2', { status: 200 });
+			}
+			if (/\/v\/\d+$/.test(url)) {
+				return new Response(
+					JSON.stringify({ content: 'v', modificationDate: 1700000000 }),
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				);
+			}
+			throw new Error(`Unexpected fetch: ${init?.method} ${url}`);
+		});
+		for (let i = 0; i < 5; i++) {
+			await provider.updateNote!({ id: 'note-1', content: `change ${i}` });
+		}
+		const result = await provider.getNoteHistory!('note-1', 5);
+		assert.equal(result.current_version, 1);
+	});
+
+	it('URL-encodes the note id on both current and version GETs', async () => {
+		const provider = createApiProvider();
+		const captured = captureFetch((url, init) => {
+			if (isRawNoteGet(url, init?.method)) {
+				return rawNoteResponse({ content: 'x' }, { version: 1 });
+			}
+			if (/\/v\/\d+$/.test(url)) {
+				return new Response(
+					JSON.stringify({ content: 'v', modificationDate: 1700000000 }),
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				);
+			}
+			throw new Error(`Unexpected fetch: ${init?.method} ${url}`);
+		});
+
+		await provider.getNoteHistory!('../tag/i/x', 3);
+
+		for (const call of captured.calls) {
+			assert.ok(call.url.includes('..%2Ftag%2Fi%2Fx'));
+		}
+	});
 });
 
 // trashNote and restoreNote are mirror operations: each GETs the current
