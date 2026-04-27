@@ -543,6 +543,41 @@ if (provider.restoreNote) {
 	);
 }
 
+if (provider.getNoteVersion) {
+	const getNoteVersion = provider.getNoteVersion.bind(provider);
+	server.registerTool(
+		'get_note_version',
+		{
+			title: 'Get Note Version',
+			description:
+				'Fetch a specific historical version of a note. Read-only — does not modify state. ' +
+				'Use to preview content before calling revert_note. ' +
+				'Versions outside Simperium\'s retention window return version_not_found.',
+			inputSchema: {
+				id: z.string().min(1).describe('Note ID'),
+				version: z
+					.number()
+					.int()
+					.positive()
+					.describe('Version number (positive integer)'),
+			},
+			annotations: READ_ONLY_ANNOTATIONS,
+		},
+		async ({ id, version }) => {
+			try {
+				const note = await getNoteVersion(id, version);
+				return {
+					content: [
+						{ type: 'text', text: JSON.stringify(note, null, 2) },
+					],
+				};
+			} catch (err) {
+				return toolError(err);
+			}
+		},
+	);
+}
+
 const transport = new StdioServerTransport();
 await server.connect(transport);
 
