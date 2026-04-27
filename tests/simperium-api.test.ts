@@ -681,6 +681,205 @@ describe('updateNote', () => {
 		);
 	});
 
+	it('throws ApiError(note_in_trash) when the note is in the trash', async () => {
+		const provider = createApiProvider();
+		let postCalled = false;
+
+		mockFetch(async (url: string, opts?: RequestInit) => {
+			if (isRawNoteGet(url, opts?.method)) {
+				return rawNoteResponse({ content: 'Original', deleted: true });
+			}
+			if (isNotePost(opts?.method)) {
+				postCalled = true;
+				return new Response('2', { status: 200 });
+			}
+			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
+		});
+
+		await assert.rejects(
+			() => provider.updateNote!({ id: 'trashed-note', content: 'Updated' }),
+			(err: unknown) => err instanceof ApiError && err.code === 'note_in_trash',
+		);
+		assert.equal(postCalled, false, 'POST should not be issued for a trashed note');
+	});
+
+	it('throws ApiError(empty_content) when content is an empty string', async () => {
+		const provider = createApiProvider();
+		let fetchCalled = false;
+
+		mockFetch(async () => {
+			fetchCalled = true;
+			return new Response('', { status: 200 });
+		});
+
+		await assert.rejects(
+			() => provider.updateNote!({ id: 'note-1', content: '' }),
+			(err: unknown) => err instanceof ApiError && err.code === 'empty_content',
+		);
+		assert.equal(fetchCalled, false, 'No HTTP request should be issued for empty content');
+	});
+
+	it('throws ApiError(empty_content) when content is whitespace only', async () => {
+		const provider = createApiProvider();
+		let fetchCalled = false;
+
+		mockFetch(async () => {
+			fetchCalled = true;
+			return new Response('', { status: 200 });
+		});
+
+		await assert.rejects(
+			() => provider.updateNote!({ id: 'note-1', content: '   \n\t  ' }),
+			(err: unknown) => err instanceof ApiError && err.code === 'empty_content',
+		);
+		assert.equal(fetchCalled, false, 'No HTTP request should be issued for whitespace content');
+	});
+
+	it('skips POST and returns existing version when content matches existing', async () => {
+		const provider = createApiProvider();
+		let postCalled = false;
+
+		mockFetch(async (url: string, opts?: RequestInit) => {
+			if (isRawNoteGet(url, opts?.method)) {
+				return rawNoteResponse({ content: 'unchanged' }, { version: 7 });
+			}
+			if (isNotePost(opts?.method)) {
+				postCalled = true;
+				return new Response('99', { status: 200 });
+			}
+			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
+		});
+
+		const result = await provider.updateNote!({ id: 'note-1', content: 'unchanged' });
+
+		assert.equal(postCalled, false, 'No-op update should not POST');
+		assert.equal(result.id, 'note-1');
+		assert.equal(result.version, 7);
+	});
+
+	it('skips POST when tags match existing tags', async () => {
+		const provider = createApiProvider();
+		let postCalled = false;
+
+		mockFetch(async (url: string, opts?: RequestInit) => {
+			if (isRawNoteGet(url, opts?.method)) {
+				return rawNoteResponse(
+					{ content: 'Content', tags: ['a', 'b'] },
+					{ version: 3 },
+				);
+			}
+			if (isNotePost(opts?.method)) {
+				postCalled = true;
+				return new Response('99', { status: 200 });
+			}
+			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
+		});
+
+		const result = await provider.updateNote!({ id: 'note-1', tags: ['a', 'b'] });
+
+		assert.equal(postCalled, false);
+		assert.equal(result.version, 3);
+	});
+
+	it('POSTs when input and existing tag arrays have equal length but different sets', async () => {
+		const provider = createApiProvider();
+		let postCalled = false;
+
+		// Existing has a duplicate; naive "every input element is in existing"
+		// would incorrectly treat these as equal.
+		mockFetch(async (url: string, opts?: RequestInit) => {
+			if (isRawNoteGet(url, opts?.method)) {
+				return rawNoteResponse(
+					{ content: 'Content', tags: ['a', 'a'] },
+					{ version: 2 },
+				);
+			}
+			if (isNotePost(opts?.method)) {
+				postCalled = true;
+				return new Response('3', { status: 200 });
+			}
+			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
+		});
+
+		await provider.updateNote!({ id: 'note-1', tags: ['a', 'b'] });
+
+		assert.equal(postCalled, true, 'Different tag sets should POST even at equal array length');
+	});
+
+	it('skips POST when tags match existing tags in different order', async () => {
+		const provider = createApiProvider();
+		let postCalled = false;
+
+		mockFetch(async (url: string, opts?: RequestInit) => {
+			if (isRawNoteGet(url, opts?.method)) {
+				return rawNoteResponse(
+					{ content: 'Content', tags: ['a', 'b', 'c'] },
+					{ version: 8 },
+				);
+			}
+			if (isNotePost(opts?.method)) {
+				postCalled = true;
+				return new Response('99', { status: 200 });
+			}
+			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
+		});
+
+		const result = await provider.updateNote!({
+			id: 'note-1',
+			tags: ['c', 'a', 'b'],
+		});
+
+		assert.equal(postCalled, false, 'Reordered but equal tag set should be a no-op');
+		assert.equal(result.version, 8);
+	});
+
+	it('skips POST when markdown flag matches existing systemTags', async () => {
+		const provider = createApiProvider();
+		let postCalled = false;
+
+		mockFetch(async (url: string, opts?: RequestInit) => {
+			if (isRawNoteGet(url, opts?.method)) {
+				return rawNoteResponse(
+					{ content: 'Content', systemTags: ['markdown'] },
+					{ version: 5 },
+				);
+			}
+			if (isNotePost(opts?.method)) {
+				postCalled = true;
+				return new Response('99', { status: 200 });
+			}
+			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
+		});
+
+		const result = await provider.updateNote!({ id: 'note-1', markdown: true });
+
+		assert.equal(postCalled, false);
+		assert.equal(result.version, 5);
+	});
+
+	it('POSTs when at least one provided field differs from existing', async () => {
+		const provider = createApiProvider();
+		let postCalled = false;
+
+		mockFetch(async (url: string, opts?: RequestInit) => {
+			if (isRawNoteGet(url, opts?.method)) {
+				return rawNoteResponse(
+					{ content: 'Same', tags: ['a'] },
+					{ version: 4 },
+				);
+			}
+			if (isNotePost(opts?.method)) {
+				postCalled = true;
+				return new Response('5', { status: 200 });
+			}
+			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
+		});
+
+		await provider.updateNote!({ id: 'note-1', content: 'Same', tags: ['a', 'new'] });
+
+		assert.equal(postCalled, true, 'Partial no-op should still POST');
+	});
+
 	it('throws ApiError(unauthorized) on 401 from POST', async () => {
 		const provider = createApiProvider();
 
