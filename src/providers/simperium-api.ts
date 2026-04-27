@@ -180,6 +180,48 @@ class SimperiumApiProvider implements Provider {
 
 		return { id: input.id, version: result.version };
 	}
+
+	async trashNote(id: string): Promise<NormalizedNote> {
+		const auth = await loadToken();
+		if (!auth) {
+			throw new ApiError(
+				'no_token',
+				'Not logged in. Run `simplenote-mcp setup` to authenticate.',
+			);
+		}
+
+		// Fetch the raw record so we preserve fields we don't model in
+		// NormalizedNote (publishURL, shareURL, creationDate, unknown
+		// systemTags, etc.). Simperium's REST POST replaces the note body, so
+		// a partial POST would wipe those fields. Same approach as updateNote.
+		// The fresh GET also catches the case where another client trashed the
+		// note between any caller's cached pre-check and now.
+		const existing = await fetchRawNote(id, auth.token);
+
+		// Already trashed: no POST. Cache stays warm for the next read.
+		if (toBool(existing.deleted)) {
+			return normalizeOrThrow(id, existing);
+		}
+
+		const nowUnix = Math.floor(Date.now() / 1000);
+		const noteData: Record<string, unknown> = {
+			...existing,
+			deleted: true,
+			modificationDate: nowUnix,
+		};
+
+		const ccid = randomUUID();
+		await simperiumRequest({
+			method: 'POST',
+			path: `/note/i/${encodeURIComponent(id)}?ccid=${ccid}`,
+			token: auth.token,
+			body: noteData,
+			context: 'trashing note',
+		});
+
+		this.clearCache();
+		return normalizeOrThrow(id, noteData);
+	}
 }
 
 // Centralizes auth header, timeout, and the universal status mappings shared
@@ -337,6 +379,22 @@ async function fetchAllIndex(
 	}
 
 	return all;
+}
+
+// Wrap normalizeNote for callers that hold a known-good raw note body and
+// want a hard failure instead of a nullable result.
+function normalizeOrThrow(
+	id: string,
+	raw: Record<string, unknown>,
+): NormalizedNote {
+	const normalized = normalizeNote({ id, d: raw });
+	if (!normalized) {
+		throw new ApiError(
+			'invalid_response',
+			`Could not normalize note response for ${id}.`,
+		);
+	}
+	return normalized;
 }
 
 function normalizeNote(entry: IndexEntry): NormalizedNote | null {
