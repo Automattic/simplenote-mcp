@@ -60,6 +60,39 @@ export function mockFetch(impl: FetchImpl): void {
 	mock.method(globalThis, 'fetch', impl as unknown as typeof globalThis.fetch);
 }
 
+export type CapturedFetch = {
+	url: string;
+	method?: string;
+	headers: Record<string, string>;
+	body?: unknown;
+};
+
+// Wraps mockFetch to also record every call. The `respond` callback decides
+// what to return (often based on url/method); the returned `calls` array
+// fills in as fetch is called. JSON request bodies are parsed; non-JSON
+// bodies pass through as-is.
+export function captureFetch(
+	respond: (url: string, init?: RequestInit) => Response | Promise<Response>,
+): { calls: CapturedFetch[] } {
+	const calls: CapturedFetch[] = [];
+	mockFetch(async (url, init) => {
+		const headers = Object.fromEntries(
+			Object.entries(init?.headers ?? {}).map(([k, v]) => [k, String(v)]),
+		);
+		let body: unknown;
+		if (init?.body !== undefined) {
+			try {
+				body = JSON.parse(init.body as string);
+			} catch {
+				body = init.body;
+			}
+		}
+		calls.push({ url, method: init?.method, headers, body });
+		return respond(url, init);
+	});
+	return { calls };
+}
+
 export type FetchScriptEntry =
 	| { status: number; body: unknown }
 	| { throws: unknown };

@@ -1,7 +1,7 @@
 import { afterEach, describe, it, mock } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { ApiError, createApiProvider, _test } from '../src/providers/simperium-api.ts';
-import { mockFetch, useEnvVar } from './helpers/general.ts';
+import { captureFetch, mockFetch, useEnvVar } from './helpers/general.ts';
 import {
 	emptyIndexResponse,
 	isNotePost,
@@ -191,11 +191,7 @@ describe('mergeSystemTags', () => {
 
 describe('simperiumRequest', () => {
 	it('builds URL from API_BASE + APP_ID + path', async () => {
-		let capturedUrl: string | undefined;
-		mockFetch(async (url) => {
-			capturedUrl = url;
-			return new Response('', { status: 200 });
-		});
+		const captured = captureFetch(() => new Response('', { status: 200 }));
 
 		await simperiumRequest({
 			method: 'GET',
@@ -204,48 +200,29 @@ describe('simperiumRequest', () => {
 			context: 'fetching note',
 		});
 
-		assert.match(capturedUrl!, /^https:\/\/api\.simperium\.com\/1\/[^/]+\/note\/i\/abc$/);
+		assert.match(
+			captured.calls[0]!.url,
+			/^https:\/\/api\.simperium\.com\/1\/[^/]+\/note\/i\/abc$/,
+		);
 	});
 
 	it('attaches X-Simperium-Token header', async () => {
-		let capturedHeaders: Record<string, string> | undefined;
-		mockFetch(async (_url, opts) => {
-			capturedHeaders = Object.fromEntries(
-				Object.entries(opts?.headers ?? {}).map(([k, v]) => [k, String(v)]),
-			);
-			return new Response('', { status: 200 });
-		});
+		const captured = captureFetch(() => new Response('', { status: 200 }));
 
 		await simperiumRequest({ method: 'GET', path: '/x', token: 'my-token', context: 'x' });
-		assert.equal(capturedHeaders!['X-Simperium-Token'], 'my-token');
+		assert.equal(captured.calls[0]!.headers['X-Simperium-Token'], 'my-token');
 	});
 
 	it('omits Content-Type and body when no body is given', async () => {
-		let capturedHeaders: Record<string, string> | undefined;
-		let capturedBody: unknown;
-		mockFetch(async (_url, opts) => {
-			capturedHeaders = Object.fromEntries(
-				Object.entries(opts?.headers ?? {}).map(([k, v]) => [k, String(v)]),
-			);
-			capturedBody = opts?.body;
-			return new Response('', { status: 200 });
-		});
+		const captured = captureFetch(() => new Response('', { status: 200 }));
 
 		await simperiumRequest({ method: 'GET', path: '/x', token: 't', context: 'x' });
-		assert.equal(capturedHeaders!['Content-Type'], undefined);
-		assert.equal(capturedBody, undefined);
+		assert.equal(captured.calls[0]!.headers['Content-Type'], undefined);
+		assert.equal(captured.calls[0]!.body, undefined);
 	});
 
 	it('sets Content-Type and JSON-encodes body when body is given', async () => {
-		let capturedHeaders: Record<string, string> | undefined;
-		let capturedBody: string | undefined;
-		mockFetch(async (_url, opts) => {
-			capturedHeaders = Object.fromEntries(
-				Object.entries(opts?.headers ?? {}).map(([k, v]) => [k, String(v)]),
-			);
-			capturedBody = opts?.body as string | undefined;
-			return new Response('', { status: 200 });
-		});
+		const captured = captureFetch(() => new Response('', { status: 200 }));
 
 		await simperiumRequest({
 			method: 'POST',
@@ -254,8 +231,8 @@ describe('simperiumRequest', () => {
 			body: { foo: 1 },
 			context: 'x',
 		});
-		assert.equal(capturedHeaders!['Content-Type'], 'application/json');
-		assert.deepEqual(JSON.parse(capturedBody!), { foo: 1 });
+		assert.equal(captured.calls[0]!.headers['Content-Type'], 'application/json');
+		assert.deepEqual(captured.calls[0]!.body, { foo: 1 });
 	});
 
 	it('throws network_error with context when fetch throws', async () => {
@@ -346,18 +323,7 @@ describe('simperiumRequest', () => {
 describe('createNote', () => {
 	it('sends a POST to the Simperium API with correct payload', async () => {
 		const provider = createApiProvider();
-		let capturedUrl: string | undefined;
-		let capturedBody: Record<string, unknown> | undefined;
-		let capturedHeaders: Record<string, string> | undefined;
-
-		mockFetch(async (url: string, opts?: RequestInit) => {
-			capturedUrl = url;
-			capturedHeaders = Object.fromEntries(
-				Object.entries(opts?.headers ?? {}).map(([k, v]) => [k, String(v)]),
-			);
-			capturedBody = JSON.parse(opts?.body as string);
-			return new Response('1', { status: 200 });
-		});
+		const captured = captureFetch(() => new Response('1', { status: 200 }));
 
 		const result = await provider.createNote!({
 			content: 'Test note content',
@@ -366,22 +332,25 @@ describe('createNote', () => {
 			pinned: false,
 		});
 
+		const call = captured.calls[0]!;
+		const body = call.body as Record<string, unknown>;
+
 		// Verify URL pattern
-		assert.match(capturedUrl!, /api\.simperium\.com\/1\/[^/]+\/note\/i\/[a-f0-9-]+/);
+		assert.match(call.url, /api\.simperium\.com\/1\/[^/]+\/note\/i\/[a-f0-9-]+/);
 
 		// Verify headers
-		assert.equal(capturedHeaders!['X-Simperium-Token'], 'test-token');
-		assert.equal(capturedHeaders!['Content-Type'], 'application/json');
+		assert.equal(call.headers['X-Simperium-Token'], 'test-token');
+		assert.equal(call.headers['Content-Type'], 'application/json');
 
 		// Verify body structure
-		assert.equal(capturedBody!.content, 'Test note content');
-		assert.deepEqual(capturedBody!.tags, ['test']);
-		assert.deepEqual(capturedBody!.systemTags, ['markdown']);
-		assert.equal(capturedBody!.deleted, false);
-		assert.equal(capturedBody!.publishURL, '');
-		assert.equal(capturedBody!.shareURL, '');
-		assert.equal(typeof capturedBody!.creationDate, 'number');
-		assert.equal(typeof capturedBody!.modificationDate, 'number');
+		assert.equal(body.content, 'Test note content');
+		assert.deepEqual(body.tags, ['test']);
+		assert.deepEqual(body.systemTags, ['markdown']);
+		assert.equal(body.deleted, false);
+		assert.equal(body.publishURL, '');
+		assert.equal(body.shareURL, '');
+		assert.equal(typeof body.creationDate, 'number');
+		assert.equal(typeof body.modificationDate, 'number');
 
 		// Verify result
 		assert.equal(typeof result.id, 'string');
@@ -391,37 +360,29 @@ describe('createNote', () => {
 
 	it('includes pinned in systemTags when pinned=true', async () => {
 		const provider = createApiProvider();
-		let capturedBody: Record<string, unknown> | undefined;
-
-		mockFetch(async (_url: string, opts?: RequestInit) => {
-			capturedBody = JSON.parse(opts?.body as string);
-			return new Response('1', { status: 200 });
-		});
+		const captured = captureFetch(() => new Response('1', { status: 200 }));
 
 		await provider.createNote!({
 			content: 'Pinned note',
 			pinned: true,
 		});
 
-		assert.ok((capturedBody!.systemTags as string[]).includes('pinned'));
-		assert.ok((capturedBody!.systemTags as string[]).includes('markdown'));
+		const systemTags = (captured.calls[0]!.body as Record<string, unknown>).systemTags as string[];
+		assert.ok(systemTags.includes('pinned'));
+		assert.ok(systemTags.includes('markdown'));
 	});
 
 	it('excludes markdown from systemTags when markdown=false', async () => {
 		const provider = createApiProvider();
-		let capturedBody: Record<string, unknown> | undefined;
-
-		mockFetch(async (_url: string, opts?: RequestInit) => {
-			capturedBody = JSON.parse(opts?.body as string);
-			return new Response('1', { status: 200 });
-		});
+		const captured = captureFetch(() => new Response('1', { status: 200 }));
 
 		await provider.createNote!({
 			content: 'Plain text note',
 			markdown: false,
 		});
 
-		assert.ok(!(capturedBody!.systemTags as string[]).includes('markdown'));
+		const systemTags = (captured.calls[0]!.body as Record<string, unknown>).systemTags as string[];
+		assert.ok(!systemTags.includes('markdown'));
 	});
 
 	it('clears cache after creating a note', async () => {
@@ -458,16 +419,11 @@ describe('createNote', () => {
 describe('updateNote', () => {
 	it('sends POST to the correct URL with note ID', async () => {
 		const provider = createApiProvider();
-		let capturedUrl: string | undefined;
-		let capturedMethod: string | undefined;
-
-		mockFetch(async (url: string, opts?: RequestInit) => {
+		const captured = captureFetch((url, opts) => {
 			if (isRawNoteGet(url, opts?.method)) {
 				return rawNoteResponse({ content: 'Original content' });
 			}
 			if (isNotePost(opts?.method)) {
-				capturedUrl = url;
-				capturedMethod = opts?.method;
 				return new Response('2', { status: 200 });
 			}
 			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
@@ -475,15 +431,14 @@ describe('updateNote', () => {
 
 		await provider.updateNote!({ id: 'test-note-123', content: 'Updated content' });
 
-		assert.match(capturedUrl!, /api\.simperium\.com\/1\/[^/]+\/note\/i\/test-note-123(?:\?|$)/);
-		assert.equal(capturedMethod, 'POST');
+		const post = captured.calls.find((c) => c.method === 'POST')!;
+		assert.match(post.url, /api\.simperium\.com\/1\/[^/]+\/note\/i\/test-note-123(?:\?|$)/);
+		assert.equal(post.method, 'POST');
 	});
 
 	it('merges content update with existing note values', async () => {
 		const provider = createApiProvider();
-		let capturedBody: Record<string, unknown> | undefined;
-
-		mockFetch(async (url: string, opts?: RequestInit) => {
+		const captured = captureFetch((url, opts) => {
 			if (isRawNoteGet(url, opts?.method)) {
 				return rawNoteResponse({
 					content: 'Original',
@@ -492,7 +447,6 @@ describe('updateNote', () => {
 				});
 			}
 			if (isNotePost(opts?.method)) {
-				capturedBody = JSON.parse(opts?.body as string);
 				return new Response('2', { status: 200 });
 			}
 			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
@@ -500,20 +454,19 @@ describe('updateNote', () => {
 
 		await provider.updateNote!({ id: 'note-1', content: 'New content' });
 
+		const body = captured.calls.find((c) => c.method === 'POST')!.body as Record<string, unknown>;
 		// Content should be updated
-		assert.equal(capturedBody!.content, 'New content');
+		assert.equal(body.content, 'New content');
 		// Tags should be preserved from existing note
-		assert.deepEqual(capturedBody!.tags, ['existing-tag']);
+		assert.deepEqual(body.tags, ['existing-tag']);
 		// SystemTags should preserve existing markdown and pinned
-		assert.ok((capturedBody!.systemTags as string[]).includes('markdown'));
-		assert.ok((capturedBody!.systemTags as string[]).includes('pinned'));
+		assert.ok((body.systemTags as string[]).includes('markdown'));
+		assert.ok((body.systemTags as string[]).includes('pinned'));
 	});
 
 	it('preserves publishURL, shareURL, and unknown systemTags', async () => {
 		const provider = createApiProvider();
-		let capturedBody: Record<string, unknown> | undefined;
-
-		mockFetch(async (url: string, opts?: RequestInit) => {
+		const captured = captureFetch((url, opts) => {
 			if (isRawNoteGet(url, opts?.method)) {
 				return rawNoteResponse({
 					content: 'Original',
@@ -523,7 +476,6 @@ describe('updateNote', () => {
 				});
 			}
 			if (isNotePost(opts?.method)) {
-				capturedBody = JSON.parse(opts?.body as string);
 				return new Response('2', { status: 200 });
 			}
 			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
@@ -531,9 +483,10 @@ describe('updateNote', () => {
 
 		await provider.updateNote!({ id: 'note-1', content: 'New content' });
 
-		assert.equal(capturedBody!.publishURL, 'https://simp.ly/p/abc123');
-		assert.equal(capturedBody!.shareURL, 'https://simp.ly/s/xyz789');
-		const systemTags = capturedBody!.systemTags as string[];
+		const body = captured.calls.find((c) => c.method === 'POST')!.body as Record<string, unknown>;
+		assert.equal(body.publishURL, 'https://simp.ly/p/abc123');
+		assert.equal(body.shareURL, 'https://simp.ly/s/xyz789');
+		const systemTags = body.systemTags as string[];
 		assert.ok(systemTags.includes('markdown'));
 		assert.ok(systemTags.includes('unread'));
 		assert.ok(systemTags.includes('some-future-tag'));
@@ -541,10 +494,8 @@ describe('updateNote', () => {
 
 	it('preserves creationDate from existing note', async () => {
 		const provider = createApiProvider();
-		let capturedBody: Record<string, unknown> | undefined;
 		const originalCreationDate = 1705314600;
-
-		mockFetch(async (url: string, opts?: RequestInit) => {
+		const captured = captureFetch((url, opts) => {
 			if (isRawNoteGet(url, opts?.method)) {
 				return rawNoteResponse({
 					content: 'Original',
@@ -552,7 +503,6 @@ describe('updateNote', () => {
 				});
 			}
 			if (isNotePost(opts?.method)) {
-				capturedBody = JSON.parse(opts?.body as string);
 				return new Response('2', { status: 200 });
 			}
 			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
@@ -560,20 +510,18 @@ describe('updateNote', () => {
 
 		await provider.updateNote!({ id: 'note-1', content: 'Updated' });
 
-		assert.equal(capturedBody!.creationDate, originalCreationDate);
+		const body = captured.calls.find((c) => c.method === 'POST')!.body as Record<string, unknown>;
+		assert.equal(body.creationDate, originalCreationDate);
 	});
 
 	it('updates modificationDate to current time', async () => {
 		const provider = createApiProvider();
-		let capturedBody: Record<string, unknown> | undefined;
 		const beforeUpdate = Math.floor(Date.now() / 1000);
-
-		mockFetch(async (url: string, opts?: RequestInit) => {
+		const captured = captureFetch((url, opts) => {
 			if (isRawNoteGet(url, opts?.method)) {
 				return rawNoteResponse({ content: 'Original' });
 			}
 			if (isNotePost(opts?.method)) {
-				capturedBody = JSON.parse(opts?.body as string);
 				return new Response('2', { status: 200 });
 			}
 			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
@@ -582,16 +530,15 @@ describe('updateNote', () => {
 		await provider.updateNote!({ id: 'note-1', content: 'Updated' });
 
 		const afterUpdate = Math.floor(Date.now() / 1000);
-		const modificationDate = capturedBody!.modificationDate as number;
+		const body = captured.calls.find((c) => c.method === 'POST')!.body as Record<string, unknown>;
+		const modificationDate = body.modificationDate as number;
 		assert.ok(modificationDate >= beforeUpdate);
 		assert.ok(modificationDate <= afterUpdate);
 	});
 
 	it('updates tags when provided', async () => {
 		const provider = createApiProvider();
-		let capturedBody: Record<string, unknown> | undefined;
-
-		mockFetch(async (url: string, opts?: RequestInit) => {
+		const captured = captureFetch((url, opts) => {
 			if (isRawNoteGet(url, opts?.method)) {
 				return rawNoteResponse({
 					content: 'Content',
@@ -599,7 +546,6 @@ describe('updateNote', () => {
 				});
 			}
 			if (isNotePost(opts?.method)) {
-				capturedBody = JSON.parse(opts?.body as string);
 				return new Response('2', { status: 200 });
 			}
 			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
@@ -607,17 +553,16 @@ describe('updateNote', () => {
 
 		await provider.updateNote!({ id: 'note-1', tags: ['new-tag-1', 'new-tag-2'] });
 
+		const body = captured.calls.find((c) => c.method === 'POST')!.body as Record<string, unknown>;
 		// Tags should be replaced entirely
-		assert.deepEqual(capturedBody!.tags, ['new-tag-1', 'new-tag-2']);
+		assert.deepEqual(body.tags, ['new-tag-1', 'new-tag-2']);
 		// Content should be preserved
-		assert.equal(capturedBody!.content, 'Content');
+		assert.equal(body.content, 'Content');
 	});
 
 	it('removes markdown from systemTags when markdown=false, preserves others', async () => {
 		const provider = createApiProvider();
-		let capturedBody: Record<string, unknown> | undefined;
-
-		mockFetch(async (url: string, opts?: RequestInit) => {
+		const captured = captureFetch((url, opts) => {
 			if (isRawNoteGet(url, opts?.method)) {
 				return rawNoteResponse({
 					content: 'Content',
@@ -625,7 +570,6 @@ describe('updateNote', () => {
 				});
 			}
 			if (isNotePost(opts?.method)) {
-				capturedBody = JSON.parse(opts?.body as string);
 				return new Response('2', { status: 200 });
 			}
 			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
@@ -633,7 +577,8 @@ describe('updateNote', () => {
 
 		await provider.updateNote!({ id: 'note-1', markdown: false });
 
-		const systemTags = capturedBody!.systemTags as string[];
+		const body = captured.calls.find((c) => c.method === 'POST')!.body as Record<string, unknown>;
+		const systemTags = body.systemTags as string[];
 		assert.ok(!systemTags.includes('markdown'));
 		assert.ok(systemTags.includes('pinned'));
 		assert.ok(systemTags.includes('unread'));
@@ -641,9 +586,7 @@ describe('updateNote', () => {
 
 	it('adds pinned to systemTags when pinned=true, preserves others', async () => {
 		const provider = createApiProvider();
-		let capturedBody: Record<string, unknown> | undefined;
-
-		mockFetch(async (url: string, opts?: RequestInit) => {
+		const captured = captureFetch((url, opts) => {
 			if (isRawNoteGet(url, opts?.method)) {
 				return rawNoteResponse({
 					content: 'Content',
@@ -651,7 +594,6 @@ describe('updateNote', () => {
 				});
 			}
 			if (isNotePost(opts?.method)) {
-				capturedBody = JSON.parse(opts?.body as string);
 				return new Response('2', { status: 200 });
 			}
 			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
@@ -659,7 +601,8 @@ describe('updateNote', () => {
 
 		await provider.updateNote!({ id: 'note-1', pinned: true });
 
-		const systemTags = capturedBody!.systemTags as string[];
+		const body = captured.calls.find((c) => c.method === 'POST')!.body as Record<string, unknown>;
+		const systemTags = body.systemTags as string[];
 		assert.ok(systemTags.includes('pinned'));
 		assert.ok(systemTags.includes('markdown'));
 		assert.ok(systemTags.includes('unread'));
@@ -982,12 +925,7 @@ describe('updateNote', () => {
 describe('trashNote', () => {
 	it('POSTs the full merged body with deleted:true and a new modificationDate', async () => {
 		const provider = createApiProvider();
-		let capturedUrl: string | undefined;
-		let capturedMethod: string | undefined;
-		let capturedBody: Record<string, unknown> | undefined;
-		let capturedHeaders: Record<string, string> | undefined;
-
-		mockFetch(async (url: string, opts?: RequestInit) => {
+		const captured = captureFetch((url, opts) => {
 			if (isRawNoteGet(url, opts?.method)) {
 				return rawNoteResponse({
 					content: 'My title\nbody',
@@ -998,12 +936,6 @@ describe('trashNote', () => {
 				});
 			}
 			if (isNotePost(opts?.method)) {
-				capturedUrl = url;
-				capturedMethod = opts?.method;
-				capturedHeaders = Object.fromEntries(
-					Object.entries(opts?.headers ?? {}).map(([k, v]) => [k, String(v)]),
-				);
-				capturedBody = JSON.parse(opts?.body as string);
 				return new Response('2', { status: 200 });
 			}
 			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
@@ -1013,18 +945,21 @@ describe('trashNote', () => {
 		const result = await provider.trashNote!('note-1');
 		const after = Math.floor(Date.now() / 1000);
 
-		assert.equal(capturedMethod, 'POST');
-		assert.match(capturedUrl!, /\/note\/i\/note-1\?ccid=/);
-		assert.equal(capturedHeaders!['X-Simperium-Token'], 'test-token');
-		assert.equal(capturedHeaders!['Content-Type'], 'application/json');
+		const post = captured.calls.find((c) => c.method === 'POST')!;
+		const body = post.body as Record<string, unknown>;
+
+		assert.equal(post.method, 'POST');
+		assert.match(post.url, /\/note\/i\/note-1\?ccid=/);
+		assert.equal(post.headers['X-Simperium-Token'], 'test-token');
+		assert.equal(post.headers['Content-Type'], 'application/json');
 
 		// Body contains the full note — original fields + deleted:true + fresh mod date.
-		assert.equal(capturedBody!.deleted, true);
-		assert.equal(capturedBody!.content, 'My title\nbody');
-		assert.deepEqual(capturedBody!.tags, ['work']);
-		assert.deepEqual(capturedBody!.systemTags, ['markdown']);
-		assert.equal(capturedBody!.creationDate, 1700000000);
-		const modDate = capturedBody!.modificationDate as number;
+		assert.equal(body.deleted, true);
+		assert.equal(body.content, 'My title\nbody');
+		assert.deepEqual(body.tags, ['work']);
+		assert.deepEqual(body.systemTags, ['markdown']);
+		assert.equal(body.creationDate, 1700000000);
+		const modDate = body.modificationDate as number;
 		assert.ok(modDate >= before && modDate <= after);
 
 		// Result reflects the new state.
@@ -1036,9 +971,7 @@ describe('trashNote', () => {
 
 	it('preserves publishURL, shareURL, and unknown systemTags on the POST body', async () => {
 		const provider = createApiProvider();
-		let capturedBody: Record<string, unknown> | undefined;
-
-		mockFetch(async (url: string, opts?: RequestInit) => {
+		const captured = captureFetch((url, opts) => {
 			if (isRawNoteGet(url, opts?.method)) {
 				return rawNoteResponse({
 					content: 'Body',
@@ -1048,7 +981,6 @@ describe('trashNote', () => {
 				});
 			}
 			if (isNotePost(opts?.method)) {
-				capturedBody = JSON.parse(opts?.body as string);
 				return new Response('2', { status: 200 });
 			}
 			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
@@ -1056,9 +988,10 @@ describe('trashNote', () => {
 
 		await provider.trashNote!('note-1');
 
-		assert.equal(capturedBody!.publishURL, 'https://simp.ly/p/abc123');
-		assert.equal(capturedBody!.shareURL, 'https://simp.ly/s/xyz789');
-		const systemTags = capturedBody!.systemTags as string[];
+		const body = captured.calls.find((c) => c.method === 'POST')!.body as Record<string, unknown>;
+		assert.equal(body.publishURL, 'https://simp.ly/p/abc123');
+		assert.equal(body.shareURL, 'https://simp.ly/s/xyz789');
+		const systemTags = body.systemTags as string[];
 		assert.ok(systemTags.includes('markdown'));
 		assert.ok(systemTags.includes('unread'));
 		assert.ok(systemTags.includes('some-future-tag'));
@@ -1066,16 +999,11 @@ describe('trashNote', () => {
 
 	it('URL-encodes the note ID on both GET and POST', async () => {
 		const provider = createApiProvider();
-		let capturedGetUrl: string | undefined;
-		let capturedPostUrl: string | undefined;
-
-		mockFetch(async (url: string, opts?: RequestInit) => {
+		const captured = captureFetch((url, opts) => {
 			if (isRawNoteGet(url, opts?.method)) {
-				capturedGetUrl = url;
 				return rawNoteResponse({ content: 'Sneaky' });
 			}
 			if (isNotePost(opts?.method)) {
-				capturedPostUrl = url;
 				return new Response('2', { status: 200 });
 			}
 			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
@@ -1083,9 +1011,11 @@ describe('trashNote', () => {
 
 		await provider.trashNote!('../tag/i/x');
 
+		const get = captured.calls.find((c) => c.method === undefined || c.method === 'GET')!;
+		const post = captured.calls.find((c) => c.method === 'POST')!;
 		// Encoded segment prevents path traversal into a different bucket.
-		assert.ok(capturedGetUrl!.endsWith('/note/i/..%2Ftag%2Fi%2Fx'));
-		assert.match(capturedPostUrl!, /\/note\/i\/\.\.%2Ftag%2Fi%2Fx\?ccid=/);
+		assert.ok(get.url.endsWith('/note/i/..%2Ftag%2Fi%2Fx'));
+		assert.match(post.url, /\/note\/i\/\.\.%2Ftag%2Fi%2Fx\?ccid=/);
 	});
 
 	it('short-circuits when the note is already trashed — no POST', async () => {
@@ -1262,12 +1192,7 @@ describe('trashNote', () => {
 describe('restoreNote', () => {
 	it('POSTs the full merged body with deleted:false and a new modificationDate', async () => {
 		const provider = createApiProvider();
-		let capturedUrl: string | undefined;
-		let capturedMethod: string | undefined;
-		let capturedBody: Record<string, unknown> | undefined;
-		let capturedHeaders: Record<string, string> | undefined;
-
-		mockFetch(async (url: string, opts?: RequestInit) => {
+		const captured = captureFetch((url, opts) => {
 			if (isRawNoteGet(url, opts?.method)) {
 				return rawNoteResponse({
 					content: 'Recovered\nbody',
@@ -1279,12 +1204,6 @@ describe('restoreNote', () => {
 				});
 			}
 			if (isNotePost(opts?.method)) {
-				capturedUrl = url;
-				capturedMethod = opts?.method;
-				capturedHeaders = Object.fromEntries(
-					Object.entries(opts?.headers ?? {}).map(([k, v]) => [k, String(v)]),
-				);
-				capturedBody = JSON.parse(opts?.body as string);
 				return new Response('3', { status: 200 });
 			}
 			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
@@ -1294,17 +1213,20 @@ describe('restoreNote', () => {
 		const result = await provider.restoreNote!('note-1');
 		const after = Math.floor(Date.now() / 1000);
 
-		assert.equal(capturedMethod, 'POST');
-		assert.match(capturedUrl!, /\/note\/i\/note-1\?ccid=/);
-		assert.equal(capturedHeaders!['X-Simperium-Token'], 'test-token');
-		assert.equal(capturedHeaders!['Content-Type'], 'application/json');
+		const post = captured.calls.find((c) => c.method === 'POST')!;
+		const body = post.body as Record<string, unknown>;
 
-		assert.equal(capturedBody!.deleted, false);
-		assert.equal(capturedBody!.content, 'Recovered\nbody');
-		assert.deepEqual(capturedBody!.tags, ['work']);
-		assert.deepEqual(capturedBody!.systemTags, ['markdown']);
-		assert.equal(capturedBody!.creationDate, 1700000000);
-		const modDate = capturedBody!.modificationDate as number;
+		assert.equal(post.method, 'POST');
+		assert.match(post.url, /\/note\/i\/note-1\?ccid=/);
+		assert.equal(post.headers['X-Simperium-Token'], 'test-token');
+		assert.equal(post.headers['Content-Type'], 'application/json');
+
+		assert.equal(body.deleted, false);
+		assert.equal(body.content, 'Recovered\nbody');
+		assert.deepEqual(body.tags, ['work']);
+		assert.deepEqual(body.systemTags, ['markdown']);
+		assert.equal(body.creationDate, 1700000000);
+		const modDate = body.modificationDate as number;
 		assert.ok(modDate >= before && modDate <= after);
 
 		assert.equal(result.id, 'note-1');
@@ -1315,9 +1237,7 @@ describe('restoreNote', () => {
 
 	it('preserves publishURL, shareURL, and unknown systemTags on the POST body', async () => {
 		const provider = createApiProvider();
-		let capturedBody: Record<string, unknown> | undefined;
-
-		mockFetch(async (url: string, opts?: RequestInit) => {
+		const captured = captureFetch((url, opts) => {
 			if (isRawNoteGet(url, opts?.method)) {
 				return rawNoteResponse({
 					content: 'Body',
@@ -1328,7 +1248,6 @@ describe('restoreNote', () => {
 				});
 			}
 			if (isNotePost(opts?.method)) {
-				capturedBody = JSON.parse(opts?.body as string);
 				return new Response('3', { status: 200 });
 			}
 			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
@@ -1336,9 +1255,10 @@ describe('restoreNote', () => {
 
 		await provider.restoreNote!('note-1');
 
-		assert.equal(capturedBody!.publishURL, 'https://simp.ly/p/abc123');
-		assert.equal(capturedBody!.shareURL, 'https://simp.ly/s/xyz789');
-		const systemTags = capturedBody!.systemTags as string[];
+		const body = captured.calls.find((c) => c.method === 'POST')!.body as Record<string, unknown>;
+		assert.equal(body.publishURL, 'https://simp.ly/p/abc123');
+		assert.equal(body.shareURL, 'https://simp.ly/s/xyz789');
+		const systemTags = body.systemTags as string[];
 		assert.ok(systemTags.includes('markdown'));
 		assert.ok(systemTags.includes('unread'));
 		assert.ok(systemTags.includes('some-future-tag'));
@@ -1346,16 +1266,11 @@ describe('restoreNote', () => {
 
 	it('URL-encodes the note ID on both GET and POST', async () => {
 		const provider = createApiProvider();
-		let capturedGetUrl: string | undefined;
-		let capturedPostUrl: string | undefined;
-
-		mockFetch(async (url: string, opts?: RequestInit) => {
+		const captured = captureFetch((url, opts) => {
 			if (isRawNoteGet(url, opts?.method)) {
-				capturedGetUrl = url;
 				return rawNoteResponse({ content: 'Sneaky', deleted: true });
 			}
 			if (isNotePost(opts?.method)) {
-				capturedPostUrl = url;
 				return new Response('3', { status: 200 });
 			}
 			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
@@ -1363,8 +1278,10 @@ describe('restoreNote', () => {
 
 		await provider.restoreNote!('../tag/i/x');
 
-		assert.ok(capturedGetUrl!.endsWith('/note/i/..%2Ftag%2Fi%2Fx'));
-		assert.match(capturedPostUrl!, /\/note\/i\/\.\.%2Ftag%2Fi%2Fx\?ccid=/);
+		const get = captured.calls.find((c) => c.method === undefined || c.method === 'GET')!;
+		const post = captured.calls.find((c) => c.method === 'POST')!;
+		assert.ok(get.url.endsWith('/note/i/..%2Ftag%2Fi%2Fx'));
+		assert.match(post.url, /\/note\/i\/\.\.%2Ftag%2Fi%2Fx\?ccid=/);
 	});
 
 	it('short-circuits when the note is already restored — no POST', async () => {
