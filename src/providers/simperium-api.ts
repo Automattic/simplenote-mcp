@@ -387,10 +387,9 @@ class SimperiumApiProvider implements Provider {
 		const versions: number[] = [];
 		for (let v = currentVersion; v >= oldest; v--) versions.push(v);
 
-		// TODO: If Simperium throttles us at higher concurrencies, wrap with a
-		// small p-limit-style pool (5-8). Unverified at present (RSM-1230 design).
-		const settled = await Promise.all(
-			versions.map(async (v) => {
+		const settled = await parallelMap(
+			versions,
+			async (v) => {
 				try {
 					const data = await fetchNoteVersion(id, v, auth.token);
 					return { version: v, data };
@@ -400,7 +399,8 @@ class SimperiumApiProvider implements Provider {
 					}
 					throw err;
 				}
-			}),
+			},
+			HISTORY_FETCH_CONCURRENCY,
 		);
 
 		const entries: NoteVersionEntry[] = settled
@@ -434,10 +434,16 @@ class SimperiumApiProvider implements Provider {
 
 		// Fetch both in parallel — order doesn't matter for the no-op check and
 		// we'll need both regardless.
-		const [{ data: current, version: currentVersion }, target] = await Promise.all([
+		const [rawResult, versionResult] = await Promise.allSettled([
 			fetchRawNote(input.id, auth.token),
 			fetchNoteVersion(input.id, input.version, auth.token),
 		]);
+		// Prioritize the current-state error so a missing note surfaces as
+		// not_found rather than racing version_not_found from the parallel fetch.
+		if (rawResult.status === 'rejected') throw rawResult.reason;
+		if (versionResult.status === 'rejected') throw versionResult.reason;
+		const { data: current, version: currentVersion } = rawResult.value;
+		const target = versionResult.value;
 
 		if (isRevertNoOp(target, current)) {
 			return {
@@ -834,6 +840,30 @@ function toIsoFromUnix(value: unknown): string | null {
 
 const HISTORY_PREVIEW_MAX_CODE_POINTS = 100;
 const HISTORY_PREVIEW_ELLIPSIS = '…';
+
+const HISTORY_FETCH_CONCURRENCY = 8;
+
+// Worker-pool parallel map: at most `concurrency` calls to `fn` are in flight
+// at once. Preserves input order in the result. Used by getNoteHistory to
+// avoid hammering Simperium with up to 25 parallel version GETs.
+async function parallelMap<T, R>(
+	items: readonly T[],
+	fn: (item: T) => Promise<R>,
+	concurrency: number,
+): Promise<R[]> {
+	const results: R[] = new Array(items.length);
+	let nextIndex = 0;
+	async function worker(): Promise<void> {
+		while (true) {
+			const i = nextIndex++;
+			if (i >= items.length) return;
+			results[i] = await fn(items[i]!);
+		}
+	}
+	const workerCount = Math.min(concurrency, items.length);
+	await Promise.all(Array.from({ length: workerCount }, () => worker()));
+	return results;
+}
 
 function buildContentPreview(content: unknown): string {
 	if (typeof content !== 'string') return '';

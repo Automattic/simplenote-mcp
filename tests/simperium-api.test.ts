@@ -1141,6 +1141,38 @@ describe('getNoteHistory', () => {
 		assert.equal(preview, 'a' + '😀'.repeat(99) + '…');
 	});
 
+	it('caps concurrent version fetches at HISTORY_FETCH_CONCURRENCY', async () => {
+		const provider = createApiProvider();
+		let inflight = 0;
+		let maxInflight = 0;
+		captureFetch((url, init) => {
+			if (isRawNoteGet(url, init?.method)) {
+				return rawNoteResponse({ content: 'curr' }, { version: 25 });
+			}
+			if (/\/v\/\d+$/.test(url)) {
+				inflight++;
+				maxInflight = Math.max(maxInflight, inflight);
+				return new Promise<Response>((resolve) => {
+					setTimeout(() => {
+						inflight--;
+						resolve(
+							new Response(
+								JSON.stringify({ content: 'v', modificationDate: 1700000000 }),
+								{ status: 200, headers: { 'content-type': 'application/json' } },
+							),
+						);
+					}, 5);
+				});
+			}
+			throw new Error(`Unexpected fetch: ${init?.method} ${url}`);
+		});
+
+		await provider.getNoteHistory!('note-1', 25);
+
+		assert.ok(maxInflight <= 8, `expected max in-flight <= 8, got ${maxInflight}`);
+		assert.ok(maxInflight > 1, `expected concurrency > 1 (parallelism is real), got ${maxInflight}`);
+	});
+
 	it('drops pruned versions silently (404), exposing the gap via version numbers', async () => {
 		const provider = createApiProvider();
 		captureFetch((url, init) => {
@@ -2053,6 +2085,28 @@ describe('revertNote (no-op and errors)', () => {
 		captureFetch(() => new Response('', { status: 404 }));
 		await assert.rejects(
 			() => provider.revertNote!({ id: 'note-1', version: 1 }),
+			(err: ApiError) => err instanceof ApiError && err.code === 'not_found',
+		);
+	});
+
+	it('prefers not_found over version_not_found when the note does not exist', async () => {
+		const provider = createApiProvider();
+		captureFetch((url, init) => {
+			if (isRawNoteGet(url, init?.method)) {
+				// Make the current-state GET resolve LATER so a naive Promise.all
+				// would race version_not_found ahead of not_found.
+				return new Promise<Response>((resolve) => {
+					setTimeout(() => resolve(new Response('', { status: 404 })), 20);
+				});
+			}
+			if (/\/v\/\d+$/.test(url)) {
+				return new Response('', { status: 404 });
+			}
+			throw new Error(`Unexpected fetch: ${init?.method} ${url}`);
+		});
+
+		await assert.rejects(
+			() => provider.revertNote!({ id: 'missing', version: 1 }),
 			(err: ApiError) => err instanceof ApiError && err.code === 'not_found',
 		);
 	});
