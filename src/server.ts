@@ -78,6 +78,17 @@ const RESTORE_ANNOTATIONS = {
 	openWorldHint: true,
 } as const;
 
+// Revert overwrites current content with a historical version. Destructive
+// because it replaces the present state; not idempotent (each call creates
+// a new version on top of the current one, even when the body matches —
+// except for the in-provider no-op short-circuit).
+const REVERT_ANNOTATIONS = {
+	readOnlyHint: false,
+	destructiveHint: true,
+	idempotentHint: false,
+	openWorldHint: true,
+} as const;
+
 server.registerTool(
 	'list_tags',
 	{
@@ -608,6 +619,57 @@ if (provider.getNoteHistory) {
 				return {
 					content: [
 						{ type: 'text', text: JSON.stringify(history, null, 2) },
+					],
+				};
+			} catch (err) {
+				return toolError(err);
+			}
+		},
+	);
+}
+
+if (provider.revertNote) {
+	const revertNote = provider.revertNote.bind(provider);
+	server.registerTool(
+		'revert_note',
+		{
+			title: 'Revert Note',
+			description:
+				'Restore a note to a prior version. Counts toward the write-rate budget. ' +
+				'Bypasses the trashed-note guard — reverting to a non-trashed version ' +
+				'will un-trash the note; reverting to a trashed version will re-trash. ' +
+				'Use get_note_history first to pick a version, and get_note_version to ' +
+				'preview the full content before reverting. ' +
+				'Requires write-mode enabled in `simplenote-mcp setup`.',
+			inputSchema: {
+				id: z.string().min(1).describe('Note ID'),
+				version: z
+					.number()
+					.int()
+					.positive()
+					.describe('Target version to restore (positive integer)'),
+			},
+			annotations: REVERT_ANNOTATIONS,
+		},
+		async ({ id, version }) => {
+			try {
+				const result = await revertNote({ id, version });
+				return {
+					content: [
+						{
+							type: 'text',
+							text: JSON.stringify(
+								{
+									success: true,
+									id: result.id,
+									reverted_from_version: result.reverted_from_version,
+									new_version: result.new_version,
+									no_op: result.no_op,
+								},
+								null,
+								2,
+							),
+						},
 					],
 				};
 			} catch (err) {
