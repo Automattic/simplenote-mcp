@@ -36,19 +36,31 @@ export type RawNote = {
 	[k: string]: unknown;
 };
 
-// Single-note GET response (Simperium /1/{app}/note/i/{id}).
-export function rawNoteResponse(note: RawNote = {}): Response {
-	return Response.json({
-		content: '',
-		tags: [],
-		systemTags: [],
-		deleted: false,
-		creationDate: 1700000000,
-		modificationDate: 1700000100,
-		publishURL: '',
-		shareURL: '',
-		...note,
-	});
+// Single-note GET response (Simperium /1/{app}/note/i/{id}). The optional
+// `version` sets the X-Simperium-Version response header that callers use to
+// detect the note's current version number.
+export function rawNoteResponse(
+	note: RawNote = {},
+	opts: { version?: number } = {},
+): Response {
+	const headers: Record<string, string> = { 'content-type': 'application/json' };
+	if (opts.version !== undefined) {
+		headers['X-Simperium-Version'] = String(opts.version);
+	}
+	return new Response(
+		JSON.stringify({
+			content: '',
+			tags: [],
+			systemTags: [],
+			deleted: false,
+			creationDate: 1700000000,
+			modificationDate: 1700000100,
+			publishURL: '',
+			shareURL: '',
+			...note,
+		}),
+		{ status: 200, headers },
+	);
 }
 
 export function emptyIndexResponse(): Response {
