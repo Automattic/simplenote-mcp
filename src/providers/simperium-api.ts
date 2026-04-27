@@ -41,6 +41,7 @@ export type ApiErrorCode =
 	| 'note_in_trash'
 	| 'empty_content'
 	| 'rate_limited'
+	| 'invalid_argument'
 	| 'version_not_found';
 
 export class ApiError extends Error {
@@ -345,7 +346,7 @@ class SimperiumApiProvider implements Provider {
 	async getNoteVersion(id: string, version: number): Promise<NoteVersionResult> {
 		if (!Number.isInteger(version) || version < 1) {
 			throw new ApiError(
-				'invalid_response',
+				'invalid_argument',
 				`Invalid version ${version}: must be a positive integer.`,
 			);
 		}
