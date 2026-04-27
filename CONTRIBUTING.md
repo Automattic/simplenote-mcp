@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping improve Simplenote MCP. This project is a Node.js MCP server that reads Simplenote data from either the macOS desktop app store or the Simperium API.
+Thanks for helping improve Simplenote MCP. This project is a Node.js MCP server that reads Simplenote data from either the Simplenote macOS app's local Core Data store or the Simperium API.
 
 ## Development Setup
 

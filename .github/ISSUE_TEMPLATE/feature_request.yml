@@ -23,7 +23,7 @@ body:
       label: Provider
       description: Which provider should this apply to?
       options:
-        - Native macOS app (local Core Data store)
+        - Simplenote macOS app (local Core Data store)
         - Simperium API
         - Both
         - Not sure
