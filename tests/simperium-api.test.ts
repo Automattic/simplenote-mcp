@@ -1830,3 +1830,122 @@ describe('loadStore stale-cache fallback', () => {
 		);
 	});
 });
+
+type RevertSpec = {
+	label: string;
+	startDeleted: boolean;
+	targetDeleted: boolean;
+};
+
+function describeRevertToggle(spec: RevertSpec): void {
+	const { label, startDeleted, targetDeleted } = spec;
+
+	describe(`revertNote (${label})`, () => {
+		it('overlays target content/tags/systemTags/deleted onto current and POSTs', async () => {
+			const provider = createApiProvider();
+			const captured = captureFetch((url, init) => {
+				if (isRawNoteGet(url, init?.method)) {
+					return rawNoteResponse(
+						{
+							content: 'current content',
+							tags: ['current-tag'],
+							systemTags: ['markdown'],
+							deleted: startDeleted,
+							publishURL: 'https://simp.ly/p/keep',
+							shareURL: 'https://simp.ly/s/keep',
+						},
+						{ version: 5 },
+					);
+				}
+				if (/\/note\/i\/note-1\/v\/2$/.test(url)) {
+					return new Response(
+						JSON.stringify({
+							content: 'old content',
+							tags: ['old-tag'],
+							systemTags: ['markdown', 'pinned'],
+							deleted: targetDeleted,
+							modificationDate: 1700000000,
+						}),
+						{ status: 200, headers: { 'content-type': 'application/json' } },
+					);
+				}
+				if (isNotePost(init?.method)) {
+					return new Response('6', { status: 200 });
+				}
+				throw new Error(`Unexpected fetch: ${init?.method} ${url}`);
+			});
+
+			const before = Math.floor(Date.now() / 1000);
+			const result = await provider.revertNote!({ id: 'note-1', version: 2 });
+			const after = Math.floor(Date.now() / 1000);
+
+			const post = captured.calls.find((c) => c.method === 'POST')!;
+			const body = post.body as Record<string, unknown>;
+
+			assert.match(post.url, /\/note\/i\/note-1\?ccid=/);
+			assert.equal(post.headers['Content-Type'], 'application/json');
+			assert.equal(body.content, 'old content');
+			assert.deepEqual(body.tags, ['old-tag']);
+			assert.deepEqual(body.systemTags, ['markdown', 'pinned']);
+			assert.equal(body.deleted, targetDeleted);
+			// Untracked fields preserved from current.
+			assert.equal(body.publishURL, 'https://simp.ly/p/keep');
+			assert.equal(body.shareURL, 'https://simp.ly/s/keep');
+			// Fresh modificationDate.
+			const modDate = body.modificationDate as number;
+			assert.ok(modDate >= before && modDate <= after);
+
+			assert.deepEqual(result, {
+				id: 'note-1',
+				reverted_from_version: 2,
+				new_version: 6,
+				no_op: false,
+			});
+		});
+
+		it('throws rate_limited before any POST when budget is exhausted', async () => {
+			const provider = createApiProvider();
+			let postCount = 0;
+			captureFetch((url, init) => {
+				if (isRawNoteGet(url, init?.method)) {
+					return rawNoteResponse(
+						{ content: 'c', deleted: startDeleted },
+						{ version: 5 },
+					);
+				}
+				if (/\/v\/2$/.test(url)) {
+					return new Response(
+						JSON.stringify({
+							content: 'old',
+							deleted: targetDeleted,
+							modificationDate: 1700000000,
+						}),
+						{ status: 200, headers: { 'content-type': 'application/json' } },
+					);
+				}
+				if (isNotePost(init?.method)) {
+					postCount++;
+					return new Response('6', { status: 200 });
+				}
+				throw new Error(`Unexpected fetch: ${init?.method} ${url}`);
+			});
+
+			// Saturate via 5 successful reverts. Each one POSTs once.
+			for (let i = 0; i < 5; i++) {
+				await provider.revertNote!({ id: 'note-1', version: 2 });
+			}
+			const postsBefore = postCount;
+			await assert.rejects(
+				() => provider.revertNote!({ id: 'note-1', version: 2 }),
+				(err: ApiError) =>
+					err instanceof ApiError && err.code === 'rate_limited',
+			);
+			assert.equal(postCount, postsBefore, 'no POST should have been issued');
+		});
+	});
+}
+
+describeRevertToggle({ label: 'live → live', startDeleted: false, targetDeleted: false });
+describeRevertToggle({ label: 'trashed → live (un-trash)', startDeleted: true, targetDeleted: false });
+describeRevertToggle({ label: 'live → trashed (re-trash)', startDeleted: false, targetDeleted: true });
+describeRevertToggle({ label: 'trashed → trashed', startDeleted: true, targetDeleted: true });

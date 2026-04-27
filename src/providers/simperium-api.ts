@@ -413,6 +413,61 @@ class SimperiumApiProvider implements Provider {
 
 		return { id, current_version: currentVersion, entries };
 	}
+
+	async revertNote(input: NoteRevertInput): Promise<NoteRevertResult> {
+		if (!Number.isInteger(input.version) || input.version < 1) {
+			throw new ApiError(
+				'invalid_argument',
+				`Invalid version ${input.version}: must be a positive integer.`,
+			);
+		}
+		const auth = await loadToken();
+		if (!auth) {
+			throw new ApiError(
+				'no_token',
+				'Not logged in. Run `simplenote-mcp setup` to authenticate.',
+			);
+		}
+
+		// Fetch both in parallel — order doesn't matter for the no-op check and
+		// we'll need both regardless.
+		const [{ data: current, version: currentVersion }, target] = await Promise.all([
+			fetchRawNote(input.id, auth.token),
+			fetchNoteVersion(input.id, input.version, auth.token),
+		]);
+
+		if (isRevertNoOp(target, current)) {
+			return {
+				id: input.id,
+				reverted_from_version: input.version,
+				new_version: currentVersion,
+				no_op: true,
+			};
+		}
+
+		this.checkWriteRate();
+
+		const noteData: Record<string, unknown> = {
+			...current,
+			content: target.content,
+			tags: target.tags,
+			systemTags: target.systemTags,
+			deleted: target.deleted,
+			modificationDate: Math.floor(Date.now() / 1000),
+		};
+
+		const result = await postNote(input.id, noteData, auth.token, 'update');
+
+		this.recordWrite();
+		this.clearCache();
+
+		return {
+			id: input.id,
+			reverted_from_version: input.version,
+			new_version: result.version,
+			no_op: false,
+		};
+	}
 }
 
 // Centralizes auth header, timeout, and the universal status mappings shared
@@ -723,6 +778,27 @@ function isUpdateNoOp(
 	) {
 		return false;
 	}
+	return true;
+}
+
+function isRevertNoOp(
+	target: Record<string, unknown>,
+	current: Record<string, unknown>,
+): boolean {
+	if (target.content !== current.content) return false;
+	const targetTags = Array.isArray(target.tags) ? target.tags : [];
+	const currentTags = Array.isArray(current.tags) ? current.tags : [];
+	if (!stringArraysSetEqual(
+		targetTags.filter((t): t is string => typeof t === 'string'),
+		currentTags.filter((t): t is string => typeof t === 'string'),
+	)) return false;
+	const targetSysTags = Array.isArray(target.systemTags) ? target.systemTags : [];
+	const currentSysTags = Array.isArray(current.systemTags) ? current.systemTags : [];
+	if (!stringArraysSetEqual(
+		targetSysTags.filter((t): t is string => typeof t === 'string'),
+		currentSysTags.filter((t): t is string => typeof t === 'string'),
+	)) return false;
+	if (toBool(target.deleted) !== toBool(current.deleted)) return false;
 	return true;
 }
 
