@@ -8,6 +8,7 @@ import {
 	type Provider,
 } from './providers/normalize.js';
 import { resolveProvider } from './providers/resolver.js';
+import { createTelemetry, makeTrackedToolHandler } from './telemetry.js';
 
 // CLI subcommand dispatch must run before MCP/store setup.
 const subcommand = process.argv[2];
@@ -30,7 +31,16 @@ try {
 	process.exit(1);
 }
 
+const telemetry = await createTelemetry();
+const trackTool = makeTrackedToolHandler(telemetry, () => provider.name);
 const server = new McpServer({ name: 'simplenote', version: '1.0.0' });
+
+function trackedTool<TArgs extends unknown[], TResult>(
+	name: string,
+	handler: (...args: TArgs) => TResult | Promise<TResult>,
+): (...args: TArgs) => Promise<TResult> {
+	return (...args) => trackTool(name, () => handler(...args));
+}
 
 // All tools are read-only queries. The Simperium provider is network-bound,
 // so openWorldHint is true even though the native macOS provider is local.
@@ -76,7 +86,7 @@ server.registerTool(
 		inputSchema: {},
 		annotations: READ_ONLY_ANNOTATIONS,
 	},
-	async () => {
+	trackedTool('list_tags', async () => {
 		try {
 			const { tags } = await provider.loadStore();
 			const result = [...tags].sort((a, b) => a.index - b.index);
@@ -84,7 +94,7 @@ server.registerTool(
 		} catch (err) {
 			return toolError(err);
 		}
-	},
+	}),
 );
 
 server.registerTool(
@@ -110,7 +120,7 @@ server.registerTool(
 		},
 		annotations: READ_ONLY_ANNOTATIONS,
 	},
-	async ({ tag, limit, include_deleted }) => {
+	trackedTool('list_notes', async ({ tag, limit, include_deleted }) => {
 		try {
 			const { notes } = await provider.loadStore();
 			const result = notes
@@ -133,7 +143,7 @@ server.registerTool(
 		} catch (err) {
 			return toolError(err);
 		}
-	},
+	}),
 );
 
 server.registerTool(
@@ -159,7 +169,7 @@ server.registerTool(
 		},
 		annotations: READ_ONLY_ANNOTATIONS,
 	},
-	async ({ query, limit, include_deleted }) => {
+	trackedTool('search_notes', async ({ query, limit, include_deleted }) => {
 		try {
 			const { notes } = await provider.loadStore();
 			const q = query.toLowerCase();
@@ -208,7 +218,7 @@ server.registerTool(
 		} catch (err) {
 			return toolError(err);
 		}
-	},
+	}),
 );
 
 server.registerTool(
@@ -226,7 +236,7 @@ server.registerTool(
 		},
 		annotations: READ_ONLY_ANNOTATIONS,
 	},
-	async ({ id, include_deleted }) => {
+	trackedTool('get_note', async ({ id, include_deleted }) => {
 		try {
 			const { notes } = await provider.loadStore();
 			const note = notes.find((n) => n.id === id);
@@ -251,7 +261,7 @@ server.registerTool(
 		} catch (err) {
 			return toolError(err);
 		}
-	},
+	}),
 );
 
 // Register write tools only when the resolved provider advertises the
@@ -282,7 +292,7 @@ if (provider.createNote) {
 			},
 			annotations: WRITE_ANNOTATIONS,
 		},
-		async ({ content, tags, markdown, pinned }) => {
+		trackedTool('create_note', async ({ content, tags, markdown, pinned }) => {
 			try {
 				const result = await createNote({ content, tags, markdown, pinned });
 				return {
@@ -305,7 +315,7 @@ if (provider.createNote) {
 			} catch (err) {
 				return toolError(err);
 			}
-		},
+		}),
 	);
 }
 
@@ -335,7 +345,7 @@ if (provider.updateNote) {
 			},
 			annotations: WRITE_ANNOTATIONS,
 		},
-		async ({ id, content, tags, markdown, pinned }) => {
+		trackedTool('update_note', async ({ id, content, tags, markdown, pinned }) => {
 			if (
 				content === undefined &&
 				tags === undefined &&
@@ -374,7 +384,7 @@ if (provider.updateNote) {
 			} catch (err) {
 				return toolError(err);
 			}
-		},
+		}),
 	);
 
 	// Prompt is gated alongside the update_note tool so clients without write
