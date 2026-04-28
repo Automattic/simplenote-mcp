@@ -66,7 +66,7 @@ export type CapturedFetch = {
 	headers: Record<string, string>;
 	/** Raw request body as supplied to fetch (string, Blob, etc.), or undefined. */
 	rawBody?: BodyInit;
-	/** JSON-parsed body when rawBody is a JSON string; otherwise same as rawBody. */
+	/** JSON-parsed body when rawBody is a valid JSON string; the rawBody value otherwise (non-string BodyInit, or a string that is not valid JSON). */
 	body?: unknown;
 };
 
