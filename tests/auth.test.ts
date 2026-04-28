@@ -11,7 +11,7 @@ import {
 	saveToken,
 	_test,
 } from '../src/providers/auth.ts';
-import { mockFetch, useTmpDir } from './helpers.ts';
+import { mockFetch, useTmpDir } from './helpers/general.ts';
 
 const { extractToken, extractUsername } = _test;
 
@@ -56,6 +56,8 @@ describe('requestLoginCode', () => {
 		let observedBody: unknown;
 		mockFetch(async (url, init) => {
 			observedUrl = String(url);
+			assert.ok(init, 'expected fetch to be called with an init object');
+			assert.equal(typeof init.body, 'string', 'expected fetch init.body to be a string');
 			observedBody = JSON.parse(init.body as string);
 			return new Response('', { status: 200 });
 		});
