@@ -79,13 +79,13 @@ const RESTORE_ANNOTATIONS = {
 } as const;
 
 // Revert overwrites current content with a historical version. Destructive
-// because it replaces the present state; not idempotent (each call creates
-// a new version on top of the current one, even when the body matches —
-// except for the in-provider no-op short-circuit).
+// because it replaces the present state, but idempotent for a fixed
+// {id, version}: after the first successful revert, the provider
+// short-circuits subsequent identical calls as a no-op.
 const REVERT_ANNOTATIONS = {
 	readOnlyHint: false,
 	destructiveHint: true,
-	idempotentHint: false,
+	idempotentHint: true,
 	openWorldHint: true,
 } as const;
 
