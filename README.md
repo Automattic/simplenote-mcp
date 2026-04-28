@@ -457,7 +457,7 @@ npm run build        # tsc + chmod +x on the bin
 
 ```bash
 npm run build
-npx @modelcontextprotocol/inspector node dist/server.js
+npm run inspect
 ```
 
 Open the URL it prints and click **Connect**.
