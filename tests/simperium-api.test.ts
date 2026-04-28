@@ -923,534 +923,307 @@ describe('updateNote', () => {
 	});
 });
 
-describe('trashNote', () => {
-	it('POSTs the full merged body with deleted:true and a new modificationDate', async () => {
-		const provider = createApiProvider();
-		const captured = captureFetch((url, opts) => {
-			if (isRawNoteGet(url, opts?.method)) {
-				return rawNoteResponse({
-					content: 'My title\nbody',
-					tags: ['work'],
-					systemTags: ['markdown'],
-					creationDate: 1700000000,
-					modificationDate: 1700000100,
-				});
-			}
-			if (isNotePost(opts?.method)) {
-				return new Response('2', { status: 200 });
-			}
-			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
+// trashNote and restoreNote are mirror operations: each GETs the current
+// note, decides whether to POST a state-flipped copy, and otherwise behaves
+// the same on the wire (same URL shape, same headers, same error matrix,
+// same caching behavior). Generate the describe for both off one spec.
+type WriteToggleSpec = {
+	methodName: 'trashNote' | 'restoreNote';
+	// What the GET sees BEFORE the toggle. The body should flip to !initialDeleted.
+	initialDeleted: boolean;
+	// What the body / result should set deleted to after the toggle.
+	finalDeleted: boolean;
+	// Verb that appears in the labelled error messages.
+	label: 'trashing' | 'restoring';
+};
+
+function describeWriteToggle(spec: WriteToggleSpec): void {
+	const { methodName, initialDeleted, finalDeleted, label } = spec;
+	const targetState = finalDeleted ? 'trashed' : 'restored';
+
+	describe(methodName, () => {
+		it(`POSTs the full merged body with deleted:${finalDeleted} and a new modificationDate`, async () => {
+			const provider = createApiProvider();
+			const captured = captureFetch((url, opts) => {
+				if (isRawNoteGet(url, opts?.method)) {
+					return rawNoteResponse({
+						content: 'Note body',
+						tags: ['work'],
+						systemTags: ['markdown'],
+						deleted: initialDeleted,
+						creationDate: 1700000000,
+						modificationDate: 1700000100,
+					});
+				}
+				if (isNotePost(opts?.method)) {
+					return new Response('2', { status: 200 });
+				}
+				throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
+			});
+
+			const before = Math.floor(Date.now() / 1000);
+			const result = await provider[methodName]!('note-1');
+			const after = Math.floor(Date.now() / 1000);
+
+			const post = captured.calls.find((c) => c.method === 'POST')!;
+			const body = post.body as Record<string, unknown>;
+
+			assert.equal(post.method, 'POST');
+			assert.match(post.url, /\/note\/i\/note-1\?ccid=/);
+			assert.equal(post.headers['X-Simperium-Token'], 'test-token');
+			assert.equal(post.headers['Content-Type'], 'application/json');
+
+			// Body contains the full note — original fields + flipped deleted + fresh mod date.
+			assert.equal(body.deleted, finalDeleted);
+			assert.equal(body.content, 'Note body');
+			assert.deepEqual(body.tags, ['work']);
+			assert.deepEqual(body.systemTags, ['markdown']);
+			assert.equal(body.creationDate, 1700000000);
+			const modDate = body.modificationDate as number;
+			assert.ok(modDate >= before && modDate <= after);
+
+			// Result reflects the new state.
+			assert.equal(result.id, 'note-1');
+			assert.equal(result.deleted, finalDeleted);
+			assert.equal(result.content, 'Note body');
+			assert.ok(result.modified);
 		});
 
-		const before = Math.floor(Date.now() / 1000);
-		const result = await provider.trashNote!('note-1');
-		const after = Math.floor(Date.now() / 1000);
+		it('preserves publishURL, shareURL, and unknown systemTags on the POST body', async () => {
+			const provider = createApiProvider();
+			const captured = captureFetch((url, opts) => {
+				if (isRawNoteGet(url, opts?.method)) {
+					return rawNoteResponse({
+						content: 'Body',
+						systemTags: ['markdown', 'unread', 'some-future-tag'],
+						publishURL: 'https://simp.ly/p/abc123',
+						shareURL: 'https://simp.ly/s/xyz789',
+						deleted: initialDeleted,
+					});
+				}
+				if (isNotePost(opts?.method)) {
+					return new Response('2', { status: 200 });
+				}
+				throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
+			});
 
-		const post = captured.calls.find((c) => c.method === 'POST')!;
-		const body = post.body as Record<string, unknown>;
+			await provider[methodName]!('note-1');
 
-		assert.equal(post.method, 'POST');
-		assert.match(post.url, /\/note\/i\/note-1\?ccid=/);
-		assert.equal(post.headers['X-Simperium-Token'], 'test-token');
-		assert.equal(post.headers['Content-Type'], 'application/json');
-
-		// Body contains the full note — original fields + deleted:true + fresh mod date.
-		assert.equal(body.deleted, true);
-		assert.equal(body.content, 'My title\nbody');
-		assert.deepEqual(body.tags, ['work']);
-		assert.deepEqual(body.systemTags, ['markdown']);
-		assert.equal(body.creationDate, 1700000000);
-		const modDate = body.modificationDate as number;
-		assert.ok(modDate >= before && modDate <= after);
-
-		// Result reflects the new state.
-		assert.equal(result.id, 'note-1');
-		assert.equal(result.deleted, true);
-		assert.equal(result.content, 'My title\nbody');
-		assert.ok(result.modified);
-	});
-
-	it('preserves publishURL, shareURL, and unknown systemTags on the POST body', async () => {
-		const provider = createApiProvider();
-		const captured = captureFetch((url, opts) => {
-			if (isRawNoteGet(url, opts?.method)) {
-				return rawNoteResponse({
-					content: 'Body',
-					systemTags: ['markdown', 'unread', 'some-future-tag'],
-					publishURL: 'https://simp.ly/p/abc123',
-					shareURL: 'https://simp.ly/s/xyz789',
-				});
-			}
-			if (isNotePost(opts?.method)) {
-				return new Response('2', { status: 200 });
-			}
-			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
+			const body = captured.calls.find((c) => c.method === 'POST')!.body as Record<string, unknown>;
+			assert.equal(body.publishURL, 'https://simp.ly/p/abc123');
+			assert.equal(body.shareURL, 'https://simp.ly/s/xyz789');
+			const systemTags = body.systemTags as string[];
+			assert.ok(systemTags.includes('markdown'));
+			assert.ok(systemTags.includes('unread'));
+			assert.ok(systemTags.includes('some-future-tag'));
 		});
 
-		await provider.trashNote!('note-1');
+		it('URL-encodes the note ID on both GET and POST', async () => {
+			const provider = createApiProvider();
+			const captured = captureFetch((url, opts) => {
+				if (isRawNoteGet(url, opts?.method)) {
+					return rawNoteResponse({ content: 'Sneaky', deleted: initialDeleted });
+				}
+				if (isNotePost(opts?.method)) {
+					return new Response('2', { status: 200 });
+				}
+				throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
+			});
 
-		const body = captured.calls.find((c) => c.method === 'POST')!.body as Record<string, unknown>;
-		assert.equal(body.publishURL, 'https://simp.ly/p/abc123');
-		assert.equal(body.shareURL, 'https://simp.ly/s/xyz789');
-		const systemTags = body.systemTags as string[];
-		assert.ok(systemTags.includes('markdown'));
-		assert.ok(systemTags.includes('unread'));
-		assert.ok(systemTags.includes('some-future-tag'));
-	});
+			await provider[methodName]!('../tag/i/x');
 
-	it('URL-encodes the note ID on both GET and POST', async () => {
-		const provider = createApiProvider();
-		const captured = captureFetch((url, opts) => {
-			if (isRawNoteGet(url, opts?.method)) {
-				return rawNoteResponse({ content: 'Sneaky' });
-			}
-			if (isNotePost(opts?.method)) {
-				return new Response('2', { status: 200 });
-			}
-			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
+			const get = captured.calls.find((c) => c.method === undefined || c.method === 'GET')!;
+			const post = captured.calls.find((c) => c.method === 'POST')!;
+			// Encoded segment prevents path traversal into a different bucket.
+			assert.ok(get.url.endsWith('/note/i/..%2Ftag%2Fi%2Fx'));
+			assert.match(post.url, /\/note\/i\/\.\.%2Ftag%2Fi%2Fx\?ccid=/);
 		});
 
-		await provider.trashNote!('../tag/i/x');
+		it(`short-circuits when the note is already ${targetState} — no POST`, async () => {
+			const provider = createApiProvider();
+			let postCount = 0;
 
-		const get = captured.calls.find((c) => c.method === undefined || c.method === 'GET')!;
-		const post = captured.calls.find((c) => c.method === 'POST')!;
-		// Encoded segment prevents path traversal into a different bucket.
-		assert.ok(get.url.endsWith('/note/i/..%2Ftag%2Fi%2Fx'));
-		assert.match(post.url, /\/note\/i\/\.\.%2Ftag%2Fi%2Fx\?ccid=/);
-	});
+			mockFetch(async (url: string, opts?: RequestInit) => {
+				if (isRawNoteGet(url, opts?.method)) {
+					// GET sees the note already in the target state.
+					return rawNoteResponse({ content: 'Body', deleted: finalDeleted });
+				}
+				if (isNotePost(opts?.method)) {
+					postCount++;
+					return new Response('2', { status: 200 });
+				}
+				throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
+			});
 
-	it('short-circuits when the note is already trashed — no POST', async () => {
-		const provider = createApiProvider();
-		let postCount = 0;
+			const result = await provider[methodName]!('note-1');
 
-		mockFetch(async (url: string, opts?: RequestInit) => {
-			if (isRawNoteGet(url, opts?.method)) {
-				return rawNoteResponse({ content: 'Gone', deleted: true });
-			}
-			if (isNotePost(opts?.method)) {
-				postCount++;
-				return new Response('2', { status: 200 });
-			}
-			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
+			assert.equal(postCount, 0);
+			assert.equal(result.id, 'note-1');
+			assert.equal(result.deleted, finalDeleted);
 		});
 
-		const result = await provider.trashNote!('note-1');
+		it('throws ApiError(not_found) when GET returns 404 — no POST', async () => {
+			const provider = createApiProvider();
+			let postCount = 0;
 
-		assert.equal(postCount, 0);
-		assert.equal(result.id, 'note-1');
-		assert.equal(result.deleted, true);
-	});
+			mockFetch(async (url: string, opts?: RequestInit) => {
+				if (isRawNoteGet(url, opts?.method)) {
+					return new Response('', { status: 404 });
+				}
+				if (isNotePost(opts?.method)) {
+					postCount++;
+					return new Response('2', { status: 200 });
+				}
+				throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
+			});
 
-	it('throws ApiError(not_found) when GET returns 404 — no POST', async () => {
-		const provider = createApiProvider();
-		let postCount = 0;
-
-		mockFetch(async (url: string, opts?: RequestInit) => {
-			if (isRawNoteGet(url, opts?.method)) {
-				return new Response('', { status: 404 });
-			}
-			if (isNotePost(opts?.method)) {
-				postCount++;
-				return new Response('2', { status: 200 });
-			}
-			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
+			await assert.rejects(
+				() => provider[methodName]!('does-not-exist'),
+				(err: unknown) => err instanceof ApiError && err.code === 'not_found',
+			);
+			assert.equal(postCount, 0);
 		});
 
-		await assert.rejects(
-			() => provider.trashNote!('does-not-exist'),
-			(err: unknown) => err instanceof ApiError && err.code === 'not_found',
-		);
-		assert.equal(postCount, 0);
-	});
+		it('throws ApiError(unauthorized) on 401 from POST', async () => {
+			const provider = createApiProvider();
 
-	it('throws ApiError(unauthorized) on 401 from POST', async () => {
-		const provider = createApiProvider();
+			mockFetch(async (url: string, opts?: RequestInit) => {
+				if (isRawNoteGet(url, opts?.method)) {
+					return rawNoteResponse({ content: 'Body', deleted: initialDeleted });
+				}
+				if (isNotePost(opts?.method)) {
+					return new Response('', { status: 401 });
+				}
+				throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
+			});
 
-		mockFetch(async (url: string, opts?: RequestInit) => {
-			if (isRawNoteGet(url, opts?.method)) {
-				return rawNoteResponse({ content: 'Body' });
-			}
-			if (isNotePost(opts?.method)) {
-				return new Response('', { status: 401 });
-			}
-			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
+			await assert.rejects(
+				() => provider[methodName]!('note-1'),
+				(err: unknown) => err instanceof ApiError && err.code === 'unauthorized',
+			);
 		});
 
-		await assert.rejects(
-			() => provider.trashNote!('note-1'),
-			(err: unknown) => err instanceof ApiError && err.code === 'unauthorized',
-		);
-	});
+		it(`throws ApiError(request_failed) with "${label}" label on non-2xx from POST`, async () => {
+			const provider = createApiProvider();
 
-	it('throws ApiError(request_failed) with "trashing" label on non-2xx from POST', async () => {
-		const provider = createApiProvider();
+			mockFetch(async (url: string, opts?: RequestInit) => {
+				if (isRawNoteGet(url, opts?.method)) {
+					return rawNoteResponse({ content: 'Body', deleted: initialDeleted });
+				}
+				if (isNotePost(opts?.method)) {
+					return new Response('', { status: 500 });
+				}
+				throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
+			});
 
-		mockFetch(async (url: string, opts?: RequestInit) => {
-			if (isRawNoteGet(url, opts?.method)) {
-				return rawNoteResponse({ content: 'Body' });
-			}
-			if (isNotePost(opts?.method)) {
-				return new Response('', { status: 500 });
-			}
-			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
+			await assert.rejects(
+				() => provider[methodName]!('note-1'),
+				(err: unknown) =>
+					err instanceof ApiError &&
+					err.code === 'request_failed' &&
+					err.message.includes(label),
+			);
 		});
 
-		await assert.rejects(
-			() => provider.trashNote!('note-1'),
-			(err: unknown) =>
-				err instanceof ApiError &&
-				err.code === 'request_failed' &&
-				err.message.includes('trashing'),
-		);
-	});
+		it(`throws ApiError(network_error) with "${label}" label when POST fetch throws`, async () => {
+			const provider = createApiProvider();
 
-	it('throws ApiError(network_error) with "trashing" label when POST fetch throws', async () => {
-		const provider = createApiProvider();
+			mockFetch(async (url: string, opts?: RequestInit) => {
+				if (isRawNoteGet(url, opts?.method)) {
+					return rawNoteResponse({ content: 'Body', deleted: initialDeleted });
+				}
+				if (isNotePost(opts?.method)) {
+					throw new Error('Network failure');
+				}
+				throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
+			});
 
-		mockFetch(async (url: string, opts?: RequestInit) => {
-			if (isRawNoteGet(url, opts?.method)) {
-				return rawNoteResponse({ content: 'Body' });
-			}
-			if (isNotePost(opts?.method)) {
-				throw new Error('Network failure');
-			}
-			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
+			await assert.rejects(
+				() => provider[methodName]!('note-1'),
+				(err: unknown) =>
+					err instanceof ApiError &&
+					err.code === 'network_error' &&
+					err.message.includes(label),
+			);
 		});
 
-		await assert.rejects(
-			() => provider.trashNote!('note-1'),
-			(err: unknown) =>
-				err instanceof ApiError &&
-				err.code === 'network_error' &&
-				err.message.includes('trashing'),
-		);
-	});
+		it(`clears cache after ${label} a note`, async () => {
+			const provider = createApiProvider();
+			let indexFetchCount = 0;
 
-	it('clears cache after trashing a note', async () => {
-		const provider = createApiProvider();
-		let indexFetchCount = 0;
+			mockFetch(async (url: string, opts?: RequestInit) => {
+				if (url.includes('/index')) {
+					indexFetchCount++;
+					return Response.json({ index: [], mark: undefined });
+				}
+				if (isRawNoteGet(url, opts?.method)) {
+					return rawNoteResponse({ content: 'Body', deleted: initialDeleted });
+				}
+				if (isNotePost(opts?.method)) {
+					return new Response('2', { status: 200 });
+				}
+				throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
+			});
 
-		mockFetch(async (url: string, opts?: RequestInit) => {
-			if (url.includes('/index')) {
-				indexFetchCount++;
-				return Response.json({ index: [], mark: undefined });
-			}
-			if (isRawNoteGet(url, opts?.method)) {
-				return rawNoteResponse({ content: 'Body' });
-			}
-			if (isNotePost(opts?.method)) {
-				return new Response('2', { status: 200 });
-			}
-			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
+			await provider.loadStore();
+			assert.equal(indexFetchCount, 2);
+
+			// Cache hit.
+			await provider.loadStore();
+			assert.equal(indexFetchCount, 2);
+
+			await provider[methodName]!('note-1');
+
+			// After the toggle, cache is invalidated — next load refetches.
+			await provider.loadStore();
+			assert.equal(indexFetchCount, 4);
 		});
 
-		await provider.loadStore();
-		assert.equal(indexFetchCount, 2);
+		it(`invalidates cache on already-${targetState} short-circuit`, async () => {
+			// The fresh GET is authoritative — if it reveals the note is already
+			// in the target state while the cache thinks otherwise (cross-client
+			// race), we must drop the stale cache even though we skipped the POST.
+			const provider = createApiProvider();
+			let indexFetchCount = 0;
 
-		// Cache hit.
-		await provider.loadStore();
-		assert.equal(indexFetchCount, 2);
+			mockFetch(async (url: string, opts?: RequestInit) => {
+				if (url.includes('/index')) {
+					indexFetchCount++;
+					return Response.json({ index: [], mark: undefined });
+				}
+				if (isRawNoteGet(url, opts?.method)) {
+					return rawNoteResponse({ content: 'Body', deleted: finalDeleted });
+				}
+				if (isNotePost(opts?.method)) {
+					throw new Error('POST should not happen on short-circuit');
+				}
+				throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
+			});
 
-		await provider.trashNote!('note-1');
+			await provider.loadStore();
+			assert.equal(indexFetchCount, 2);
 
-		// After trash, cache is invalidated — next load refetches.
-		await provider.loadStore();
-		assert.equal(indexFetchCount, 4);
-	});
+			await provider[methodName]!('note-1');
 
-	it('invalidates cache on already-trashed short-circuit', async () => {
-		// The fresh GET is authoritative — if it reveals the note is already
-		// trashed while the cache still thinks it's active (cross-client race),
-		// we must drop the stale cache even though we skipped the POST.
-		const provider = createApiProvider();
-		let indexFetchCount = 0;
-
-		mockFetch(async (url: string, opts?: RequestInit) => {
-			if (url.includes('/index')) {
-				indexFetchCount++;
-				return Response.json({ index: [], mark: undefined });
-			}
-			if (isRawNoteGet(url, opts?.method)) {
-				return rawNoteResponse({ content: 'Gone', deleted: true });
-			}
-			if (isNotePost(opts?.method)) {
-				throw new Error('POST should not happen on short-circuit');
-			}
-			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
+			// Short-circuit still drops the cache — next load refetches.
+			await provider.loadStore();
+			assert.equal(indexFetchCount, 4);
 		});
-
-		await provider.loadStore();
-		assert.equal(indexFetchCount, 2);
-
-		await provider.trashNote!('note-1');
-
-		// Short-circuit still drops the cache — next load refetches.
-		await provider.loadStore();
-		assert.equal(indexFetchCount, 4);
 	});
+}
+
+describeWriteToggle({
+	methodName: 'trashNote',
+	initialDeleted: false,
+	finalDeleted: true,
+	label: 'trashing',
 });
 
-describe('restoreNote', () => {
-	it('POSTs the full merged body with deleted:false and a new modificationDate', async () => {
-		const provider = createApiProvider();
-		const captured = captureFetch((url, opts) => {
-			if (isRawNoteGet(url, opts?.method)) {
-				return rawNoteResponse({
-					content: 'Recovered\nbody',
-					tags: ['work'],
-					systemTags: ['markdown'],
-					deleted: true,
-					creationDate: 1700000000,
-					modificationDate: 1700000100,
-				});
-			}
-			if (isNotePost(opts?.method)) {
-				return new Response('3', { status: 200 });
-			}
-			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
-		});
-
-		const before = Math.floor(Date.now() / 1000);
-		const result = await provider.restoreNote!('note-1');
-		const after = Math.floor(Date.now() / 1000);
-
-		const post = captured.calls.find((c) => c.method === 'POST')!;
-		const body = post.body as Record<string, unknown>;
-
-		assert.equal(post.method, 'POST');
-		assert.match(post.url, /\/note\/i\/note-1\?ccid=/);
-		assert.equal(post.headers['X-Simperium-Token'], 'test-token');
-		assert.equal(post.headers['Content-Type'], 'application/json');
-
-		assert.equal(body.deleted, false);
-		assert.equal(body.content, 'Recovered\nbody');
-		assert.deepEqual(body.tags, ['work']);
-		assert.deepEqual(body.systemTags, ['markdown']);
-		assert.equal(body.creationDate, 1700000000);
-		const modDate = body.modificationDate as number;
-		assert.ok(modDate >= before && modDate <= after);
-
-		assert.equal(result.id, 'note-1');
-		assert.equal(result.deleted, false);
-		assert.equal(result.content, 'Recovered\nbody');
-		assert.ok(result.modified);
-	});
-
-	it('preserves publishURL, shareURL, and unknown systemTags on the POST body', async () => {
-		const provider = createApiProvider();
-		const captured = captureFetch((url, opts) => {
-			if (isRawNoteGet(url, opts?.method)) {
-				return rawNoteResponse({
-					content: 'Body',
-					systemTags: ['markdown', 'unread', 'some-future-tag'],
-					publishURL: 'https://simp.ly/p/abc123',
-					shareURL: 'https://simp.ly/s/xyz789',
-					deleted: true,
-				});
-			}
-			if (isNotePost(opts?.method)) {
-				return new Response('3', { status: 200 });
-			}
-			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
-		});
-
-		await provider.restoreNote!('note-1');
-
-		const body = captured.calls.find((c) => c.method === 'POST')!.body as Record<string, unknown>;
-		assert.equal(body.publishURL, 'https://simp.ly/p/abc123');
-		assert.equal(body.shareURL, 'https://simp.ly/s/xyz789');
-		const systemTags = body.systemTags as string[];
-		assert.ok(systemTags.includes('markdown'));
-		assert.ok(systemTags.includes('unread'));
-		assert.ok(systemTags.includes('some-future-tag'));
-	});
-
-	it('URL-encodes the note ID on both GET and POST', async () => {
-		const provider = createApiProvider();
-		const captured = captureFetch((url, opts) => {
-			if (isRawNoteGet(url, opts?.method)) {
-				return rawNoteResponse({ content: 'Sneaky', deleted: true });
-			}
-			if (isNotePost(opts?.method)) {
-				return new Response('3', { status: 200 });
-			}
-			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
-		});
-
-		await provider.restoreNote!('../tag/i/x');
-
-		const get = captured.calls.find((c) => c.method === undefined || c.method === 'GET')!;
-		const post = captured.calls.find((c) => c.method === 'POST')!;
-		assert.ok(get.url.endsWith('/note/i/..%2Ftag%2Fi%2Fx'));
-		assert.match(post.url, /\/note\/i\/\.\.%2Ftag%2Fi%2Fx\?ccid=/);
-	});
-
-	it('short-circuits when the note is already restored — no POST', async () => {
-		const provider = createApiProvider();
-		let postCount = 0;
-
-		mockFetch(async (url: string, opts?: RequestInit) => {
-			if (isRawNoteGet(url, opts?.method)) {
-				return rawNoteResponse({ content: 'Alive', deleted: false });
-			}
-			if (isNotePost(opts?.method)) {
-				postCount++;
-				return new Response('3', { status: 200 });
-			}
-			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
-		});
-
-		const result = await provider.restoreNote!('note-1');
-
-		assert.equal(postCount, 0);
-		assert.equal(result.id, 'note-1');
-		assert.equal(result.deleted, false);
-	});
-
-	it('throws ApiError(not_found) when GET returns 404 — no POST', async () => {
-		const provider = createApiProvider();
-		let postCount = 0;
-
-		mockFetch(async (url: string, opts?: RequestInit) => {
-			if (isRawNoteGet(url, opts?.method)) {
-				return new Response('', { status: 404 });
-			}
-			if (isNotePost(opts?.method)) {
-				postCount++;
-				return new Response('3', { status: 200 });
-			}
-			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
-		});
-
-		await assert.rejects(
-			() => provider.restoreNote!('does-not-exist'),
-			(err: unknown) => err instanceof ApiError && err.code === 'not_found',
-		);
-		assert.equal(postCount, 0);
-	});
-
-	it('throws ApiError(unauthorized) on 401 from POST', async () => {
-		const provider = createApiProvider();
-
-		mockFetch(async (url: string, opts?: RequestInit) => {
-			if (isRawNoteGet(url, opts?.method)) {
-				return rawNoteResponse({ content: 'Body', deleted: true });
-			}
-			if (isNotePost(opts?.method)) {
-				return new Response('', { status: 401 });
-			}
-			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
-		});
-
-		await assert.rejects(
-			() => provider.restoreNote!('note-1'),
-			(err: unknown) => err instanceof ApiError && err.code === 'unauthorized',
-		);
-	});
-
-	it('throws ApiError(request_failed) with "restoring" label on non-2xx from POST', async () => {
-		const provider = createApiProvider();
-
-		mockFetch(async (url: string, opts?: RequestInit) => {
-			if (isRawNoteGet(url, opts?.method)) {
-				return rawNoteResponse({ content: 'Body', deleted: true });
-			}
-			if (isNotePost(opts?.method)) {
-				return new Response('', { status: 500 });
-			}
-			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
-		});
-
-		await assert.rejects(
-			() => provider.restoreNote!('note-1'),
-			(err: unknown) =>
-				err instanceof ApiError &&
-				err.code === 'request_failed' &&
-				err.message.includes('restoring'),
-		);
-	});
-
-	it('throws ApiError(network_error) with "restoring" label when POST fetch throws', async () => {
-		const provider = createApiProvider();
-
-		mockFetch(async (url: string, opts?: RequestInit) => {
-			if (isRawNoteGet(url, opts?.method)) {
-				return rawNoteResponse({ content: 'Body', deleted: true });
-			}
-			if (isNotePost(opts?.method)) {
-				throw new Error('Network failure');
-			}
-			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
-		});
-
-		await assert.rejects(
-			() => provider.restoreNote!('note-1'),
-			(err: unknown) =>
-				err instanceof ApiError &&
-				err.code === 'network_error' &&
-				err.message.includes('restoring'),
-		);
-	});
-
-	it('clears cache after restoring a note', async () => {
-		const provider = createApiProvider();
-		let indexFetchCount = 0;
-
-		mockFetch(async (url: string, opts?: RequestInit) => {
-			if (url.includes('/index')) {
-				indexFetchCount++;
-				return Response.json({ index: [], mark: undefined });
-			}
-			if (isRawNoteGet(url, opts?.method)) {
-				return rawNoteResponse({ content: 'Body', deleted: true });
-			}
-			if (isNotePost(opts?.method)) {
-				return new Response('3', { status: 200 });
-			}
-			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
-		});
-
-		await provider.loadStore();
-		assert.equal(indexFetchCount, 2);
-
-		await provider.loadStore();
-		assert.equal(indexFetchCount, 2);
-
-		await provider.restoreNote!('note-1');
-
-		await provider.loadStore();
-		assert.equal(indexFetchCount, 4);
-	});
-
-	it('invalidates cache on already-restored short-circuit', async () => {
-		// The fresh GET is authoritative — if it reveals the note is already
-		// restored while the cache still thinks it's trashed (cross-client race),
-		// we must drop the stale cache even though we skipped the POST.
-		const provider = createApiProvider();
-		let indexFetchCount = 0;
-
-		mockFetch(async (url: string, opts?: RequestInit) => {
-			if (url.includes('/index')) {
-				indexFetchCount++;
-				return Response.json({ index: [], mark: undefined });
-			}
-			if (isRawNoteGet(url, opts?.method)) {
-				return rawNoteResponse({ content: 'Alive', deleted: false });
-			}
-			if (isNotePost(opts?.method)) {
-				throw new Error('POST should not happen on short-circuit');
-			}
-			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
-		});
-
-		await provider.loadStore();
-		assert.equal(indexFetchCount, 2);
-
-		await provider.restoreNote!('note-1');
-
-		await provider.loadStore();
-		assert.equal(indexFetchCount, 4);
-	});
+describeWriteToggle({
+	methodName: 'restoreNote',
+	initialDeleted: true,
+	finalDeleted: false,
+	label: 'restoring',
 });
 
 // ---------- write rate cap ----------
