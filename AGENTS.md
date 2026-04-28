@@ -6,8 +6,14 @@ This repository is a Node.js 22+ TypeScript MCP server for Simplenote. It expose
 
 ## Project Shape
 
-- `src/server.ts` is the MCP entry point. It registers tools and prompts, resolves the active provider, and connects over stdio.
+- `src/server.ts` is the MCP entry point and composition root. It dispatches CLI subcommands before setup, parses server startup args, resolves the active provider, wires telemetry, registers tool groups, and connects over stdio.
+- `src/server-args.ts` parses server startup flags such as `--path`. Keep runtime server options here rather than in `src/cli.ts`.
 - `src/cli.ts` implements CLI subcommands: `setup`, `logout`, and `disable-telemetry`.
+- `src/tools/` contains MCP tool and prompt registration code:
+  - `common.ts` defines shared registration context, annotations, and tool error formatting.
+  - `read.ts` registers core read tools: list tags, list/search notes, and get note.
+  - `write.ts` registers write-capability-gated tools plus the revert workflow group. `get_note_history` and `get_note_version` live here because they primarily support `revert_note`, but they must keep read-only MCP annotations.
+  - `results.ts` defines tool output schemas and shared structured/text response helpers.
 - `src/providers/` contains provider and persistence code:
   - `resolver.ts` chooses local vs. API provider from config, token, and `--path`.
   - `native-macos.ts` reads the macOS Simplenote store from disk and is always read-only.
@@ -57,7 +63,7 @@ npm run build
 - Provider resolution is configuration-driven. `simplenote-mcp setup` writes `config.json`; missing or malformed config should produce actionable setup guidance.
 - `--path` MUST force the native macOS provider and remain read-only. It intentionally ignores missing/malformed config and only warns when it overrides API write-mode.
 - The native macOS provider MUST remain read-only. Do not add write methods to `native-macos.ts`.
-- Write tools are registered only when the resolved provider advertises write capabilities. The resolver strips `createNote`, `updateNote`, `trashNote`, and `restoreNote` in API read-only mode; keep that capability gate intact.
+- Write and write-workflow tools are registered only when the resolved provider advertises the relevant capability. The resolver strips optional provider capabilities in API read-only mode; keep that capability gate intact.
 - `update_note` replaces the entire note content when `content` is provided, and replaces the entire tag list when `tags` is provided. Any workflow or tool description that edits part of a note MUST first read the existing note and send the full desired replacement.
 - Simperium writes must preserve fields not represented by `NormalizedNote` (`publishURL`, `shareURL`, unknown `systemTags`, etc.). Fetch the raw note, merge changes, then POST the full body.
 - Simperium note IDs must be URL-encoded before use in request paths.
@@ -86,7 +92,7 @@ npm run build
 ## Common Pitfalls
 
 - Do not assume the server is read-only everywhere. Local mode is read-only, API mode can expose write tools when `writeMode` is enabled.
-- Do not register write tools unconditionally in `src/server.ts`; clients should only see tools supported by the resolved provider.
+- Do not register capability-gated tools unconditionally; clients should only see tools supported by the resolved provider.
 - Do not send partial note content to `updateNote` unless the intended result is to replace the entire note with that partial content.
 - Do not log or emit note content, note IDs, private tags, Simplenote tokens, or account details in telemetry or test snapshots.
 - Do not script repeated login attempts; Simplenote login endpoints are rate-limited.
