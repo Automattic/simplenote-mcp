@@ -6,8 +6,13 @@ import type {
 	NormalizedTag,
 	NoteCreateInput,
 	NoteCreateResult,
+	NoteHistoryResult,
+	NoteRevertInput,
+	NoteRevertResult,
 	NoteUpdateInput,
 	NoteUpdateResult,
+	NoteVersionEntry,
+	NoteVersionResult,
 	Provider,
 } from './normalize.js';
 
@@ -35,7 +40,9 @@ export type ApiErrorCode =
 	| 'not_found'
 	| 'note_in_trash'
 	| 'empty_content'
-	| 'rate_limited';
+	| 'rate_limited'
+	| 'invalid_argument'
+	| 'version_not_found';
 
 export class ApiError extends Error {
 	readonly code: ApiErrorCode;
@@ -335,6 +342,141 @@ class SimperiumApiProvider implements Provider {
 		this.clearCache();
 		return normalizeOrThrow(id, noteData);
 	}
+
+	async getNoteVersion(id: string, version: number): Promise<NoteVersionResult> {
+		if (!Number.isInteger(version) || version < 1) {
+			throw new ApiError(
+				'invalid_argument',
+				`Invalid version ${version}: must be a positive integer.`,
+			);
+		}
+		const auth = await loadToken();
+		if (!auth) {
+			throw new ApiError(
+				'no_token',
+				'Not logged in. Run `simplenote-mcp setup` to authenticate.',
+			);
+		}
+		const data = await fetchNoteVersion(id, version, auth.token);
+		const normalized = normalizeOrThrow(id, data);
+		return { ...normalized, version };
+	}
+
+	async getNoteHistory(id: string, limit: number): Promise<NoteHistoryResult> {
+		if (!Number.isInteger(limit) || limit < 1 || limit > 25) {
+			throw new ApiError(
+				'invalid_argument',
+				`Invalid limit ${limit}: must be an integer in [1, 25].`,
+			);
+		}
+		const auth = await loadToken();
+		if (!auth) {
+			throw new ApiError(
+				'no_token',
+				'Not logged in. Run `simplenote-mcp setup` to authenticate.',
+			);
+		}
+
+		const { version: currentVersion } = await fetchRawNote(id, auth.token);
+
+		if (currentVersion < 1) {
+			return { id, current_version: currentVersion, entries: [] };
+		}
+
+		const oldest = Math.max(1, currentVersion - limit + 1);
+		const versions: number[] = [];
+		for (let v = currentVersion; v >= oldest; v--) versions.push(v);
+
+		const settled = await parallelMap(
+			versions,
+			async (v) => {
+				try {
+					const data = await fetchNoteVersion(id, v, auth.token);
+					return { version: v, data };
+				} catch (err) {
+					if (err instanceof ApiError && err.code === 'version_not_found') {
+						return null;
+					}
+					throw err;
+				}
+			},
+			HISTORY_FETCH_CONCURRENCY,
+		);
+
+		const entries: NoteVersionEntry[] = settled
+			.filter((entry): entry is { version: number; data: Record<string, unknown> } => entry !== null)
+			.map(({ version, data }) => ({
+				version,
+				modified_at: toIsoFromUnix(data.modificationDate),
+				content_preview: buildContentPreview(data.content),
+			}));
+
+		return { id, current_version: currentVersion, entries };
+	}
+
+	// Unlike updateNote, revertNote does not reject when the current note is
+	// trashed — un-trash (revert to a non-trashed version) and re-trash
+	// (revert to a trashed version) are both legitimate recovery flows.
+	async revertNote(input: NoteRevertInput): Promise<NoteRevertResult> {
+		if (!Number.isInteger(input.version) || input.version < 1) {
+			throw new ApiError(
+				'invalid_argument',
+				`Invalid version ${input.version}: must be a positive integer.`,
+			);
+		}
+		const auth = await loadToken();
+		if (!auth) {
+			throw new ApiError(
+				'no_token',
+				'Not logged in. Run `simplenote-mcp setup` to authenticate.',
+			);
+		}
+
+		// Fetch both in parallel — order doesn't matter for the no-op check and
+		// we'll need both regardless.
+		const [rawResult, versionResult] = await Promise.allSettled([
+			fetchRawNote(input.id, auth.token),
+			fetchNoteVersion(input.id, input.version, auth.token),
+		]);
+		// Prioritize the current-state error so a missing note surfaces as
+		// not_found rather than racing version_not_found from the parallel fetch.
+		if (rawResult.status === 'rejected') throw rawResult.reason;
+		if (versionResult.status === 'rejected') throw versionResult.reason;
+		const { data: current, version: currentVersion } = rawResult.value;
+		const target = versionResult.value;
+
+		if (isRevertNoOp(target, current)) {
+			return {
+				id: input.id,
+				reverted_from_version: input.version,
+				new_version: currentVersion,
+				no_op: true,
+			};
+		}
+
+		this.checkWriteRate();
+
+		const noteData: Record<string, unknown> = {
+			...current,
+			content: target.content,
+			tags: target.tags,
+			systemTags: target.systemTags,
+			deleted: target.deleted,
+			modificationDate: Math.floor(Date.now() / 1000),
+		};
+
+		const result = await postNote(input.id, noteData, auth.token, 'update');
+
+		this.recordWrite();
+		this.clearCache();
+
+		return {
+			id: input.id,
+			reverted_from_version: input.version,
+			new_version: result.version,
+			no_op: false,
+		};
+	}
 }
 
 // Centralizes auth header, timeout, and the universal status mappings shared
@@ -421,6 +563,47 @@ async function fetchRawNote(
 		);
 	}
 	return { data: body as Record<string, unknown>, version };
+}
+
+async function fetchNoteVersion(
+	noteId: string,
+	version: number,
+	token: string,
+): Promise<Record<string, unknown>> {
+	const res = await simperiumRequest({
+		method: 'GET',
+		path: `/note/i/${encodeURIComponent(noteId)}/v/${version}`,
+		token,
+		context: 'fetching note version',
+		passthroughStatus: [404],
+	});
+	if (res.status === 404) {
+		// 404 here can mean either (a) the note exists but this specific
+		// version is outside Simperium's retention window, or (b) the note
+		// itself doesn't exist. Callers that want to disambiguate can
+		// verify note existence via fetchRawNote first.
+		throw new ApiError(
+			'version_not_found',
+			`Version ${version} of note ${noteId} not available; it may not exist or may be outside Simperium's retention window.`,
+			404,
+		);
+	}
+	let body: unknown;
+	try {
+		body = await res.json();
+	} catch {
+		throw new ApiError(
+			'invalid_response',
+			'Simperium note version returned invalid JSON.',
+		);
+	}
+	if (!body || typeof body !== 'object') {
+		throw new ApiError(
+			'invalid_response',
+			'Simperium note version response was not a JSON object.',
+		);
+	}
+	return body as Record<string, unknown>;
 }
 
 async function postNote(
@@ -607,6 +790,27 @@ function isUpdateNoOp(
 	return true;
 }
 
+function isRevertNoOp(
+	target: Record<string, unknown>,
+	current: Record<string, unknown>,
+): boolean {
+	if (target.content !== current.content) return false;
+	const targetTags = Array.isArray(target.tags) ? target.tags : [];
+	const currentTags = Array.isArray(current.tags) ? current.tags : [];
+	if (!stringArraysSetEqual(
+		targetTags.filter((t): t is string => typeof t === 'string'),
+		currentTags.filter((t): t is string => typeof t === 'string'),
+	)) return false;
+	const targetSysTags = Array.isArray(target.systemTags) ? target.systemTags : [];
+	const currentSysTags = Array.isArray(current.systemTags) ? current.systemTags : [];
+	if (!stringArraysSetEqual(
+		targetSysTags.filter((t): t is string => typeof t === 'string'),
+		currentSysTags.filter((t): t is string => typeof t === 'string'),
+	)) return false;
+	if (toBool(target.deleted) !== toBool(current.deleted)) return false;
+	return true;
+}
+
 // Tags are semantically a set in Simplenote, so ['a', 'b'] and ['b', 'a'] are
 // equivalent for the purposes of no-op detection. Compare via set sizes to
 // handle duplicate entries correctly on either side.
@@ -634,6 +838,41 @@ function toIsoFromUnix(value: unknown): string | null {
 	return new Date(num * 1000).toISOString();
 }
 
+const HISTORY_PREVIEW_MAX_CODE_POINTS = 100;
+const HISTORY_PREVIEW_ELLIPSIS = '…';
+
+const HISTORY_FETCH_CONCURRENCY = 8;
+
+// Worker-pool parallel map: at most `concurrency` calls to `fn` are in flight
+// at once. Preserves input order in the result. Used by getNoteHistory to
+// avoid hammering Simperium with up to 25 parallel version GETs.
+async function parallelMap<T, R>(
+	items: readonly T[],
+	fn: (item: T) => Promise<R>,
+	concurrency: number,
+): Promise<R[]> {
+	const results: R[] = new Array(items.length);
+	let nextIndex = 0;
+	async function worker(): Promise<void> {
+		while (true) {
+			const i = nextIndex++;
+			if (i >= items.length) return;
+			results[i] = await fn(items[i]!);
+		}
+	}
+	const workerCount = Math.min(concurrency, items.length);
+	await Promise.all(Array.from({ length: workerCount }, () => worker()));
+	return results;
+}
+
+function buildContentPreview(content: unknown): string {
+	if (typeof content !== 'string') return '';
+	const cps = Array.from(content);
+	return cps.length > HISTORY_PREVIEW_MAX_CODE_POINTS
+		? cps.slice(0, HISTORY_PREVIEW_MAX_CODE_POINTS).join('') + HISTORY_PREVIEW_ELLIPSIS
+		: content;
+}
+
 export const _test = {
 	normalizeNote,
 	normalizeTag,
@@ -641,4 +880,5 @@ export const _test = {
 	toIsoFromUnix,
 	mergeSystemTags,
 	simperiumRequest,
+	fetchNoteVersion,
 };

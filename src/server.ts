@@ -78,6 +78,17 @@ const RESTORE_ANNOTATIONS = {
 	openWorldHint: true,
 } as const;
 
+// Revert overwrites current content with a historical version. Destructive
+// because it replaces the present state, but idempotent for a fixed
+// {id, version}: after the first successful revert, the provider
+// short-circuits subsequent identical calls as a no-op.
+const REVERT_ANNOTATIONS = {
+	readOnlyHint: false,
+	destructiveHint: true,
+	idempotentHint: true,
+	openWorldHint: true,
+} as const;
+
 server.registerTool(
 	'list_tags',
 	{
@@ -529,6 +540,133 @@ if (provider.restoreNote) {
 									id: restored.id,
 									title: extractTitle(restored.content),
 									restored_at: restored.modified,
+								},
+								null,
+								2,
+							),
+						},
+					],
+				};
+			} catch (err) {
+				return toolError(err);
+			}
+		}),
+	);
+}
+
+if (provider.getNoteVersion) {
+	const getNoteVersion = provider.getNoteVersion.bind(provider);
+	server.registerTool(
+		'get_note_version',
+		{
+			title: 'Get Note Version',
+			description:
+				'Fetch a specific historical version of a note. Read-only — does not modify state. ' +
+				'Use to preview content before calling revert_note. ' +
+				'Versions outside Simperium\'s retention window return version_not_found.',
+			inputSchema: {
+				id: z.string().min(1).describe('Note ID'),
+				version: z
+					.number()
+					.int()
+					.positive()
+					.describe('Version number (positive integer)'),
+			},
+			annotations: READ_ONLY_ANNOTATIONS,
+		},
+		trackedTool('get_note_version', async ({ id, version }) => {
+			try {
+				const note = await getNoteVersion(id, version);
+				return {
+					content: [
+						{ type: 'text', text: JSON.stringify(note, null, 2) },
+					],
+				};
+			} catch (err) {
+				return toolError(err);
+			}
+		}),
+	);
+}
+
+if (provider.getNoteHistory) {
+	const getNoteHistory = provider.getNoteHistory.bind(provider);
+	server.registerTool(
+		'get_note_history',
+		{
+			title: 'Get Note History',
+			description:
+				'List recent versions of a note with short content previews. Read-only. ' +
+				'Entries are sorted current-first; entry[1] is the next available earlier version. ' +
+				'Versions outside Simperium\'s retention window are silently dropped — ' +
+				'check entry.version numbers for non-contiguity.',
+			inputSchema: {
+				id: z.string().min(1).describe('Note ID'),
+				limit: z
+					.number()
+					.int()
+					.min(1)
+					.max(25)
+					.optional()
+					.default(10)
+					.describe('Max versions to return (1–25)'),
+			},
+			annotations: READ_ONLY_ANNOTATIONS,
+		},
+		trackedTool('get_note_history', async ({ id, limit }) => {
+			try {
+				const history = await getNoteHistory(id, limit);
+				return {
+					content: [
+						{ type: 'text', text: JSON.stringify(history, null, 2) },
+					],
+				};
+			} catch (err) {
+				return toolError(err);
+			}
+		}),
+	);
+}
+
+if (provider.revertNote) {
+	const revertNote = provider.revertNote.bind(provider);
+	server.registerTool(
+		'revert_note',
+		{
+			title: 'Revert Note',
+			description:
+				'Restore a note to a prior version. Normally counts toward the write-rate ' +
+				'budget, except when the target version already matches the current ' +
+				'version; in that no-op case, no POST is performed and no budget is ' +
+				'consumed. Bypasses the trashed-note guard — reverting to a non-trashed ' +
+				'version will un-trash the note; reverting to a trashed version will ' +
+				're-trash. Use get_note_history first to pick a version, and ' +
+				'get_note_version to preview the full content before reverting. ' +
+				'Requires write-mode enabled in `simplenote-mcp setup`.',
+			inputSchema: {
+				id: z.string().min(1).describe('Note ID'),
+				version: z
+					.number()
+					.int()
+					.positive()
+					.describe('Target version to restore (positive integer)'),
+			},
+			annotations: REVERT_ANNOTATIONS,
+		},
+		trackedTool('revert_note', async ({ id, version }) => {
+			try {
+				const result = await revertNote({ id, version });
+				return {
+					content: [
+						{
+							type: 'text',
+							text: JSON.stringify(
+								{
+									success: true,
+									id: result.id,
+									reverted_from_version: result.reverted_from_version,
+									new_version: result.new_version,
+									no_op: result.no_op,
 								},
 								null,
 								2,
