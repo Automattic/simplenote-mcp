@@ -64,7 +64,7 @@ npx -y simplenote-mcp setup
 
 If a local macOS Simplenote database is detected, setup offers to use it and writes `config.json` with `source: "local"`.
 
-Otherwise, setup prompts for your Simplenote email, sends a magic-link email containing a short auth code, prompts for the code, and asks whether to enable write mode. On success, it writes `config.json` and stores the token with mode `0600` in `auth.json`.
+Otherwise, setup checks for an existing token in `auth.json`. If one is already stored, setup reuses it and only asks whether to enable write mode. If no token is stored, setup prompts for your Simplenote email, sends a magic-link email containing a short auth code, prompts for the code, and then asks whether to enable write mode. On success, it writes `config.json` and stores the token with mode `0600` in `auth.json`.
 
 | Platform | Path |
 |----------|------|
@@ -85,7 +85,7 @@ npx -y simplenote-mcp logout
 Skip `auth.json` by exporting the token directly:
 
 ```bash
-SIMPLENOTE_TOKEN=<token> npx simplenote-mcp
+SIMPLENOTE_TOKEN=<token> npx -y simplenote-mcp
 ```
 
 The env var bypasses `auth.json`.
