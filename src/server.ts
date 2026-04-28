@@ -574,7 +574,7 @@ if (provider.getNoteVersion) {
 			},
 			annotations: READ_ONLY_ANNOTATIONS,
 		},
-		async ({ id, version }) => {
+		trackedTool('get_note_version', async ({ id, version }) => {
 			try {
 				const note = await getNoteVersion(id, version);
 				return {
@@ -585,7 +585,7 @@ if (provider.getNoteVersion) {
 			} catch (err) {
 				return toolError(err);
 			}
-		},
+		}),
 	);
 }
 
@@ -613,7 +613,7 @@ if (provider.getNoteHistory) {
 			},
 			annotations: READ_ONLY_ANNOTATIONS,
 		},
-		async ({ id, limit }) => {
+		trackedTool('get_note_history', async ({ id, limit }) => {
 			try {
 				const history = await getNoteHistory(id, limit);
 				return {
@@ -624,7 +624,7 @@ if (provider.getNoteHistory) {
 			} catch (err) {
 				return toolError(err);
 			}
-		},
+		}),
 	);
 }
 
@@ -651,7 +651,7 @@ if (provider.revertNote) {
 			},
 			annotations: REVERT_ANNOTATIONS,
 		},
-		async ({ id, version }) => {
+		trackedTool('revert_note', async ({ id, version }) => {
 			try {
 				const result = await revertNote({ id, version });
 				return {
@@ -675,7 +675,7 @@ if (provider.revertNote) {
 			} catch (err) {
 				return toolError(err);
 			}
-		},
+		}),
 	);
 }
 
