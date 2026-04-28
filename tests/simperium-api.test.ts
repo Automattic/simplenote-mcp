@@ -1,21 +1,21 @@
 import { afterEach, describe, it, mock } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { ApiError, createApiProvider, _test } from '../src/providers/simperium-api.ts';
+import { mockFetch, useEnvVar } from './helpers/general.ts';
 import {
 	emptyIndexResponse,
 	isNotePost,
 	isRawNoteGet,
-	mockFetch,
 	rawNoteResponse,
-	setupTestToken,
 } from './helpers/simperium.ts';
 
 const { normalizeNote, normalizeTag, toBool, toIsoFromUnix, mergeSystemTags, simperiumRequest } =
 	_test;
 
-// Sets SIMPLENOTE_TOKEN for each test and restores mocks in afterEach.
+// Pin SIMPLENOTE_TOKEN to a known value per test, and reset mocks afterwards.
 // Harmless for the pure-helper suites below (which don't make HTTP calls).
-setupTestToken();
+useEnvVar('SIMPLENOTE_TOKEN', 'test-token');
+afterEach(() => mock.restoreAll());
 
 // ---------- pure helpers ----------
 
