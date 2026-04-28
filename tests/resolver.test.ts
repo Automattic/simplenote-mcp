@@ -3,6 +3,7 @@ import { strict as assert } from 'node:assert';
 import { ConfigError, type Config } from '../src/providers/config.ts';
 import type { Provider } from '../src/providers/normalize.ts';
 import { resolveProvider, type ResolveDeps } from '../src/providers/resolver.ts';
+import { captureConsole } from './helpers.ts';
 
 afterEach(() => {
 	mock.restoreAll();
@@ -255,14 +256,6 @@ describe('resolveProvider — source=api + writeMode=false', () => {
 
 // ---------- D. --path overrides ----------
 
-function captureStderr(): { lines: string[]; restore: () => void } {
-	const lines: string[] = [];
-	const restore = mock.method(console, 'error', (msg: unknown) => {
-		lines.push(String(msg));
-	});
-	return { lines, restore: () => restore.mock.restore() };
-}
-
 describe('resolveProvider — --path overrides', () => {
 	it('warns on stderr when --path coincides with source=api + writeMode=true', async () => {
 		const { deps, stubs } = makeDeps({
@@ -272,7 +265,7 @@ describe('resolveProvider — --path overrides', () => {
 				throw new Error('loadToken should not be called when --path is used');
 			},
 		});
-		const { lines, restore } = captureStderr();
+		const { lines, restore } = captureConsole('error');
 		let provider: Provider;
 		try {
 			provider = await resolveProvider({ explicitPath: '/some/store.storedata' }, deps);
@@ -294,7 +287,7 @@ describe('resolveProvider — --path overrides', () => {
 			fileExists: () => true,
 			loadConfig: async () => ({ source: 'api', writeMode: false }),
 		});
-		const { lines, restore } = captureStderr();
+		const { lines, restore } = captureConsole('error');
 		let provider: Provider;
 		try {
 			provider = await resolveProvider({ explicitPath: '/some/store.storedata' }, deps);
@@ -312,7 +305,7 @@ describe('resolveProvider — --path overrides', () => {
 				throw new ConfigError('missing', 'not here');
 			},
 		});
-		const { lines, restore } = captureStderr();
+		const { lines, restore } = captureConsole('error');
 		let provider: Provider;
 		try {
 			provider = await resolveProvider({ explicitPath: '/some/store.storedata' }, deps);
