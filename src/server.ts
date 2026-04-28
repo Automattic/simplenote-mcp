@@ -635,11 +635,13 @@ if (provider.revertNote) {
 		{
 			title: 'Revert Note',
 			description:
-				'Restore a note to a prior version. Counts toward the write-rate budget. ' +
-				'Bypasses the trashed-note guard — reverting to a non-trashed version ' +
-				'will un-trash the note; reverting to a trashed version will re-trash. ' +
-				'Use get_note_history first to pick a version, and get_note_version to ' +
-				'preview the full content before reverting. ' +
+				'Restore a note to a prior version. Normally counts toward the write-rate ' +
+				'budget, except when the target version already matches the current ' +
+				'version; in that no-op case, no POST is performed and no budget is ' +
+				'consumed. Bypasses the trashed-note guard — reverting to a non-trashed ' +
+				'version will un-trash the note; reverting to a trashed version will ' +
+				're-trash. Use get_note_history first to pick a version, and ' +
+				'get_note_version to preview the full content before reverting. ' +
 				'Requires write-mode enabled in `simplenote-mcp setup`.',
 			inputSchema: {
 				id: z.string().min(1).describe('Note ID'),

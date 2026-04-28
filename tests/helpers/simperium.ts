@@ -53,11 +53,3 @@ export function isRawNoteGet(url: string, method?: string): boolean {
 export function isNotePost(method?: string): boolean {
 	return method === 'POST';
 }
-
-// Matches GET of a specific note version: /1/{app}/note/i/{id}/v/{version}
-export function isNoteVersionGet(url: string, method?: string): boolean {
-	return (
-		(method === undefined || method === 'GET') &&
-		/\/note\/i\/[^/?]+\/v\/\d+$/.test(url)
-	);
-}
