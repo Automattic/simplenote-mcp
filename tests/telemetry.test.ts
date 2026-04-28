@@ -98,7 +98,7 @@ describe('createTelemetry', () => {
 
 		assert.equal(events.length, 1);
 		assert.match(events[0]!.userId, UUID_RE);
-		assert.equal(events[0]!.eventName, 'setup');
+		assert.equal(events[0]!.eventName, 'setup_run');
 		assert.deepEqual(events[0]!.props, {
 			type: 'api',
 			env: 'windows',

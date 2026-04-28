@@ -10,6 +10,8 @@ export const TELEMETRY_USER_TYPE = 'simplenote:local_uuid';
 const TELEMETRY_EVENT_PREFIX = 'spmcp';
 const DISABLE_ENV_VAR = 'SIMPLENOTE_MCP_DISABLE_TELEMETRY';
 const TRACKS_EVENT_TIMEOUT_MS = 1500;
+const SETUP_EVENT_NAME = 'setup_run';
+const TOOL_CALL_EVENT_NAME = 'tool_call';
 
 export type SetupTelemetryType = 'local' | 'api';
 export type SetupTelemetryEnv = 'mac' | 'windows' | 'linux';
@@ -166,7 +168,7 @@ class TracksTelemetry implements Telemetry {
 	constructor(private readonly client: TelemetryClient) {}
 
 	async trackSetup(props: SetupTelemetryProps): Promise<void> {
-		await safeTrack(this.client, 'setup', {
+		await safeTrack(this.client, SETUP_EVENT_NAME, {
 			type: props.type,
 			env: props.env,
 			auth: props.auth,
@@ -180,7 +182,7 @@ class TracksTelemetry implements Telemetry {
 	}
 
 	async trackToolCall(props: ToolTelemetryProps): Promise<void> {
-		await safeTrack(this.client, 'tool_call', {
+		await safeTrack(this.client, TOOL_CALL_EVENT_NAME, {
 			tool: props.tool,
 			provider: props.provider,
 			success: props.success ? 'true' : 'false',
