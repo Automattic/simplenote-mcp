@@ -969,6 +969,106 @@ describe('updateNote', () => {
 		await provider.loadStore();
 		assert.equal(indexFetchCount, 4);
 	});
+
+	it('throws ApiError(suspicious_shrink) when content shrinks dramatically', async () => {
+		const provider = createApiProvider();
+		let postCalled = false;
+
+		const original = 'a'.repeat(1000);
+		mockFetch(async (url: string, opts?: RequestInit) => {
+			if (isRawNoteGet(url, opts?.method)) {
+				return rawNoteResponse({ content: original });
+			}
+			if (isNotePost(opts?.method)) {
+				postCalled = true;
+				return new Response('2', { status: 200 });
+			}
+			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
+		});
+
+		await assert.rejects(
+			() => provider.updateNote!({ id: 'note-1', content: 'b'.repeat(200) }),
+			(err: unknown) => err instanceof ApiError && err.code === 'suspicious_shrink',
+		);
+		assert.equal(postCalled, false, 'POST should not be issued for a suspicious shrink');
+	});
+
+	it('allows shrink when existing content is at the 500-char gate', async () => {
+		const provider = createApiProvider();
+		let postCalled = false;
+
+		mockFetch(async (url: string, opts?: RequestInit) => {
+			if (isRawNoteGet(url, opts?.method)) {
+				return rawNoteResponse({ content: 'a'.repeat(500) });
+			}
+			if (isNotePost(opts?.method)) {
+				postCalled = true;
+				return new Response('2', { status: 200 });
+			}
+			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
+		});
+
+		await provider.updateNote!({ id: 'note-1', content: 'b'.repeat(50) });
+		assert.equal(postCalled, true, 'POST should be issued for shrinks below the gate');
+	});
+
+	it('allows shrink at exactly the 50% boundary', async () => {
+		const provider = createApiProvider();
+		let postCalled = false;
+
+		mockFetch(async (url: string, opts?: RequestInit) => {
+			if (isRawNoteGet(url, opts?.method)) {
+				return rawNoteResponse({ content: 'a'.repeat(1000) });
+			}
+			if (isNotePost(opts?.method)) {
+				postCalled = true;
+				return new Response('2', { status: 200 });
+			}
+			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
+		});
+
+		await provider.updateNote!({ id: 'note-1', content: 'b'.repeat(500) });
+		assert.equal(postCalled, true, 'POST should be issued at the 50% boundary');
+	});
+
+	it('skips suspicious_shrink check when content is undefined (tags-only update)', async () => {
+		const provider = createApiProvider();
+		let postCalled = false;
+
+		mockFetch(async (url: string, opts?: RequestInit) => {
+			if (isRawNoteGet(url, opts?.method)) {
+				return rawNoteResponse({ content: 'a'.repeat(1000), tags: ['old'] });
+			}
+			if (isNotePost(opts?.method)) {
+				postCalled = true;
+				return new Response('2', { status: 200 });
+			}
+			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
+		});
+
+		await provider.updateNote!({ id: 'note-1', tags: ['new'] });
+		assert.equal(postCalled, true, 'Tags-only update on a long note should still POST');
+	});
+
+	it('does not crash when existing.content is missing from the raw record', async () => {
+		const provider = createApiProvider();
+		let postCalled = false;
+
+		mockFetch(async (url: string, opts?: RequestInit) => {
+			if (isRawNoteGet(url, opts?.method)) {
+				// Simulate a malformed/legacy record with no content field.
+				return rawNoteResponse({ content: undefined as unknown as string });
+			}
+			if (isNotePost(opts?.method)) {
+				postCalled = true;
+				return new Response('2', { status: 200 });
+			}
+			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
+		});
+
+		await provider.updateNote!({ id: 'note-1', content: 'a'.repeat(100) });
+		assert.equal(postCalled, true, 'Update should succeed when existing content is absent');
+	});
 });
 
 describe('getNoteVersion', () => {
