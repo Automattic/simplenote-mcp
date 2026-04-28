@@ -191,6 +191,26 @@ Then pass `--path`:
 
 `--path` always forces the native provider, even if a token is configured.
 
+## Telemetry
+
+Simplenote MCP sends anonymous usage events to Automattic. A random UUID is stored in `telemetry.json` under the same config directory as `config.json` and is sent as `_ui` with `_ut=simplenote:local_uuid`.
+
+Tracked events are limited to setup choices (`type`, OS family, write mode, and auth method for API setup) and tool calls (`tool`, provider, success/failure). Note IDs, note content, tags, search queries, Simplenote account details, and tokens are never sent.
+
+To opt out for one run, set:
+
+```bash
+SIMPLENOTE_MCP_DISABLE_TELEMETRY=1 npx -y simplenote-mcp
+```
+
+To persistently opt out:
+
+```bash
+npx simplenote-mcp disable-telemetry
+```
+
+When running from a local checkout after building, `node server.js disable-telemetry` works too.
+
 ## Provider resolution
 
 The server picks a data source automatically:
