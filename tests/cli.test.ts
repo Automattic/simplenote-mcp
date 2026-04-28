@@ -4,6 +4,7 @@ import { readFile, stat, writeFile } from 'node:fs/promises';
 import type { Interface } from 'node:readline/promises';
 import { AuthError } from '../src/providers/auth.ts';
 import { _test } from '../src/cli.ts';
+import { NOOP_TELEMETRY, type Telemetry } from '../src/telemetry.ts';
 import {
 	captureConsole,
 	captureConsoleSync,
@@ -18,6 +19,7 @@ const {
 	parseWriteModeResponse,
 	parseUseLocalResponse,
 	setupCommand,
+	disableTelemetryCommand,
 } = _test;
 
 describe('reportAuthError', () => {
@@ -180,6 +182,7 @@ async function runSetup(args: {
 	tmp: { path: (name: string) => string };
 	profile: SetupProfile;
 	responses: string[];
+	telemetry?: Telemetry;
 	fetchScript?: FetchScriptEntry[];
 }): Promise<{ exitCode: number; stdout: string[]; stderr: string[] }> {
 	if (args.fetchScript) {
@@ -194,12 +197,29 @@ async function runSetup(args: {
 			authPath: args.tmp.path('auth.json'),
 			configPath: args.tmp.path('config.json'),
 			createPrompt: makePrompt(args.responses),
+			telemetry: args.telemetry ?? NOOP_TELEMETRY,
 		});
 	} finally {
 		out.restore();
 		err.restore();
 	}
 	return { exitCode, stdout: out.lines, stderr: err.lines };
+}
+
+function captureTelemetry(): {
+	telemetry: Telemetry;
+	setupCalls: Parameters<Telemetry['trackSetup']>[0][];
+} {
+	const setupCalls: Parameters<Telemetry['trackSetup']>[0][] = [];
+	return {
+		setupCalls,
+		telemetry: {
+			async trackSetup(props) {
+				setupCalls.push(props);
+			},
+			async trackToolCall() {},
+		},
+	};
 }
 
 // ---------- setupCommand — already logged in ----------
@@ -236,6 +256,25 @@ describe('setupCommand — already logged in', () => {
 		assert.equal(exitCode, 0);
 		const config = JSON.parse(await readFile(tmp.path('config.json'), 'utf-8'));
 		assert.deepEqual(config, { source: 'api', writeMode: false });
+	});
+
+	it('tracks API setup with anonymous environment metadata', async () => {
+		const captured = captureTelemetry();
+		const { exitCode } = await runSetup({
+			tmp,
+			profile: NO_LOCAL,
+			responses: ['y'],
+			telemetry: captured.telemetry,
+		});
+		assert.equal(exitCode, 0);
+		assert.deepEqual(captured.setupCalls, [
+			{
+				type: 'api',
+				env: 'linux',
+				auth: 'existing_token',
+				writeMode: true,
+			},
+		]);
 	});
 
 	it('prints current logged-in email and writeMode OFF when config says false', async () => {
@@ -313,10 +352,12 @@ describe('setupCommand — not logged in', () => {
 	});
 
 	it('runs the full login flow, saves token, then saves config', async () => {
+		const captured = captureTelemetry();
 		const { exitCode } = await runSetup({
 			tmp,
 			profile: NO_LOCAL,
 			responses: ['mark@example.com', 'T7YLLP', 'y'],
+			telemetry: captured.telemetry,
 			fetchScript: [
 				{ status: 200, body: {} },
 				{
@@ -331,6 +372,14 @@ describe('setupCommand — not logged in', () => {
 		assert.deepEqual(auth, { username: 'mark@example.com', token: 'tok123' });
 		const config = JSON.parse(await readFile(tmp.path('config.json'), 'utf-8'));
 		assert.deepEqual(config, { source: 'api', writeMode: true });
+		assert.deepEqual(captured.setupCalls, [
+			{
+				type: 'api',
+				env: 'linux',
+				auth: 'new_login',
+				writeMode: true,
+			},
+		]);
 	});
 
 	it('exits 1 on network failure and writes no config', async () => {
@@ -368,16 +417,19 @@ describe('setupCommand — local DB detected', () => {
 
 	it('saves source=local when user accepts (Y), skipping writeMode and login', async () => {
 		// No auth.json on disk. The local-DB choice should not require login.
+		const captured = captureTelemetry();
 		const { exitCode } = await runSetup({
 			tmp,
 			profile: LOCAL_AVAILABLE,
 			responses: ['y'],
+			telemetry: captured.telemetry,
 		});
 		assert.equal(exitCode, 0);
 		const config = JSON.parse(await readFile(tmp.path('config.json'), 'utf-8'));
 		assert.deepEqual(config, { source: 'local', writeMode: false });
 		// No auth written — we never ran the login flow.
 		assert.equal(await fileExists(tmp.path('auth.json')), false);
+		assert.deepEqual(captured.setupCalls, [{ type: 'local', env: 'mac' }]);
 	});
 
 	it('saves source=local when user hits enter (default is Y)', async () => {
@@ -423,5 +475,42 @@ describe('setupCommand — local DB detected', () => {
 		assert.equal(exitCode, 0);
 		const config = JSON.parse(await readFile(tmp.path('config.json'), 'utf-8'));
 		assert.deepEqual(config, { source: 'api', writeMode: true });
+	});
+});
+
+describe('disableTelemetryCommand', () => {
+	const tmp = useTmpDir('smn-disable-telemetry-');
+
+	it('persists telemetry opt-out', async () => {
+		const out = captureConsole('log');
+		let exitCode: number;
+		try {
+			exitCode = await disableTelemetryCommand({
+				telemetryPath: tmp.path('telemetry.json'),
+			});
+		} finally {
+			out.restore();
+		}
+
+		assert.equal(exitCode, 0);
+		const raw = await readFile(tmp.path('telemetry.json'), 'utf-8');
+		assert.deepEqual(JSON.parse(raw), { disabled: true });
+		assert.ok(out.lines.some((l) => /Telemetry disabled/.test(l)));
+	});
+
+	it('returns 1 with a helpful message when opt-out cannot be saved', async () => {
+		const err = captureConsole('error');
+		let exitCode: number;
+		try {
+			exitCode = await disableTelemetryCommand({
+				telemetryPath: tmp.dir,
+			});
+		} finally {
+			err.restore();
+		}
+
+		assert.equal(exitCode, 1);
+		assert.ok(err.lines.some((l) => /Failed to disable telemetry/.test(l)));
+		assert.ok(err.lines.some((l) => /settings path is writable/.test(l)));
 	});
 });

@@ -18,12 +18,19 @@ import {
 } from './providers/config.js';
 import { getTokenPath } from './providers/paths.js';
 import { DEFAULT_NATIVE_STORE_PATH } from './providers/resolver.js';
+import {
+	createTelemetry,
+	disableTelemetry,
+	telemetryEnv,
+	type Telemetry,
+} from './telemetry.js';
 
-export type Subcommand = 'setup' | 'logout';
+export type Subcommand = 'setup' | 'logout' | 'disable-telemetry';
 
 export type SetupOptions = {
 	authPath?: string;
 	configPath?: string;
+	telemetry?: Telemetry;
 	// Injection points for tests. Defaults target a real readline interface,
 	// the real os.platform, the real filesystem, and the real native store
 	// path on macOS.
@@ -39,6 +46,8 @@ export async function runSubcommand(name: Subcommand): Promise<number> {
 			return setupCommand();
 		case 'logout':
 			return logoutCommand();
+		case 'disable-telemetry':
+			return disableTelemetryCommand();
 	}
 }
 
@@ -68,6 +77,10 @@ async function setupCommand(opts: SetupOptions = {}): Promise<number> {
 					console.error(`Failed to save config: ${message}`);
 					return 1;
 				}
+				await trackSetup(opts, {
+					type: 'local',
+					env: telemetryEnv(platformFn()),
+				});
 				console.log('\nUsing local Simplenote database.');
 				console.log('\nSetup complete.');
 				return 0;
@@ -77,7 +90,9 @@ async function setupCommand(opts: SetupOptions = {}): Promise<number> {
 		const existingToken = await loadToken({ tokenPath: opts.authPath });
 
 		let username: string;
+		let auth: 'existing_token' | 'new_login';
 		if (existingToken) {
+			auth = 'existing_token';
 			username = existingToken.username ?? 'unknown';
 			const currentConfig = await loadCurrentConfigOrNull(opts.configPath);
 			console.log(`Logged in as ${username}.`);
@@ -91,6 +106,7 @@ async function setupCommand(opts: SetupOptions = {}): Promise<number> {
 				console.log(`Write-mode is currently: ${writeModeDisplay}.\n`);
 			}
 		} else {
+			auth = 'new_login';
 			const email = (await rl.question('Simplenote email: ')).trim();
 			if (!email) {
 				console.error('Email is required.');
@@ -145,6 +161,12 @@ async function setupCommand(opts: SetupOptions = {}): Promise<number> {
 			return 1;
 		}
 
+		await trackSetup(opts, {
+			type: 'api',
+			env: telemetryEnv(platformFn()),
+			auth,
+			writeMode,
+		});
 		console.log(`\nWrite-mode: ${writeMode ? 'enabled' : 'disabled'}.`);
 		console.log('\nSetup complete.');
 		return 0;
@@ -190,11 +212,39 @@ async function logoutCommand(): Promise<number> {
 	return 0;
 }
 
+async function disableTelemetryCommand(opts: {
+	telemetryPath?: string;
+} = {}): Promise<number> {
+	try {
+		const path = await disableTelemetry({ telemetryPath: opts.telemetryPath });
+		console.log(`Telemetry disabled. Stored preference at ${path}.`);
+		return 0;
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		console.error(`Failed to disable telemetry: ${message}`);
+		console.error('Check that the telemetry settings path is writable and try again.');
+		return 1;
+	}
+}
+
+async function trackSetup(
+	opts: SetupOptions,
+	props: Parameters<Telemetry['trackSetup']>[0],
+): Promise<void> {
+	const telemetry = opts.telemetry ?? (await createTelemetry());
+	try {
+		await telemetry.trackSetup(props);
+	} catch {
+		// Setup should never fail because telemetry could not be sent.
+	}
+}
+
 export const _test = {
 	reportAuthError,
 	parseWriteModeResponse,
 	parseUseLocalResponse,
 	setupCommand,
+	disableTelemetryCommand,
 };
 
 function parseWriteModeResponse(input: string): boolean {
