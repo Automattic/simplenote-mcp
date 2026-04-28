@@ -597,7 +597,7 @@ if (provider.getNoteHistory) {
 			title: 'Get Note History',
 			description:
 				'List recent versions of a note with short content previews. Read-only. ' +
-				'Entries are sorted current-first; entry[1] is the previous version. ' +
+				'Entries are sorted current-first; entry[1] is the next available earlier version. ' +
 				'Versions outside Simperium\'s retention window are silently dropped — ' +
 				'check entry.version numbers for non-contiguity.',
 			inputSchema: {
