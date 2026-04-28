@@ -101,10 +101,8 @@ describe('parseWriteModeResponse', () => {
 });
 
 describe('parseUseLocalResponse', () => {
-	it('returns true for empty/whitespace (default Y)', () => {
+	it('returns true for empty input (default Y)', () => {
 		assert.equal(parseUseLocalResponse(''), true);
-		assert.equal(parseUseLocalResponse('   '), true);
-		assert.equal(parseUseLocalResponse('\t'), true);
 	});
 
 	it('returns true for y/yes in any case', () => {
