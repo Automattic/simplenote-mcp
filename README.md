@@ -1,6 +1,6 @@
 # simplenote-mcp
 
-An MCP (Model Context Protocol) server that gives any MCP-compatible AI tool read access to your [Simplenote](https://simplenote.com/) data.
+An MCP (Model Context Protocol) server that gives any MCP-compatible AI tool access to your [Simplenote](https://simplenote.com/) data — read by default, with opt-in write tools (create, update, trash, restore, revert) when you run `simplenote-mcp setup` with write mode enabled.
 
 On macOS, it reads directly from the local Simplenote desktop app's Core Data store — fully offline, no auth. On Linux and Windows (and on macOS without the desktop app), it talks to the Simperium HTTP API after a one-time `simplenote-mcp login`.
 
@@ -263,6 +263,53 @@ Get the full content of a specific note.
 
 **Returns:** `{id, content, tags, pinned, markdown, deleted, created, modified}`
 
+### create_note
+
+Create a new note. Write tool — requires write mode enabled in `simplenote-mcp setup` and the Simperium API provider.
+
+**Parameters:**
+- `content` (string, required) — note content (first line becomes title)
+- `tags` (array of strings, optional) — tags to attach
+- `markdown` (boolean, optional, default: true) — enable markdown rendering
+- `pinned` (boolean, optional, default: false) — pin to top of list
+
+**Returns:** `{success, id, version, title}`
+
+### update_note
+
+Update an existing note. Write tool — requires write mode and the Simperium API provider.
+
+**Important:** `content` and `tags` replace the existing values in full. When changing only part of a note, call `get_note` first and pass the merged content back. A partial value will erase the rest.
+
+**Parameters:**
+- `id` (string, required) — note ID
+- `content` (string, optional) — new note content
+- `tags` (array of strings, optional) — replace the tag list (provide the full list)
+- `markdown` (boolean, optional) — enable/disable markdown rendering
+- `pinned` (boolean, optional) — pin/unpin
+
+At least one of `content`, `tags`, `markdown`, or `pinned` must be provided.
+
+**Returns:** `{success, id, version}`
+
+### trash_note
+
+Soft-delete a note (move to Simplenote trash). The note stays in the bucket and can be restored from any Simplenote client. Write tool — requires write mode and the Simperium API provider.
+
+**Parameters:**
+- `id` (string, required) — note ID
+
+**Returns:** `{success, id, title, trashed_at}`
+
+### restore_note
+
+Restore a previously-trashed note so it reappears in active lists. Inverse of `trash_note`. Write tool — requires write mode and the Simperium API provider.
+
+**Parameters:**
+- `id` (string, required) — note ID
+
+**Returns:** `{success, id, title, restored_at}`
+
 ### get_note_history
 
 List recent versions of a note with short content previews. Read-only.
@@ -310,7 +357,7 @@ Once configured, you can ask your AI client things like:
 - "Show me what version 42 of that note looked like"
 - "Revert that note to the previous version"
 
-The server is read-only and does not modify your notes. Native macOS data is cached in memory and refreshed when the store file changes; Simperium API responses are cached for 60 seconds, with stale-cache fallback if the API is briefly unreachable.
+Write tools (create, update, trash, restore, revert) are off by default and only available with the Simperium API provider. Run `simplenote-mcp setup` and opt in to enable them. Native macOS data is cached in memory and refreshed when the store file changes; Simperium API responses are cached for 60 seconds, with stale-cache fallback if the API is briefly unreachable.
 
 ## Windows notes
 
