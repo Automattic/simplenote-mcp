@@ -2,13 +2,21 @@
 
 An MCP (Model Context Protocol) server that gives any MCP-compatible AI tool access to your [Simplenote](https://simplenote.com/) data — read by default, with opt-in write tools (create, update, trash, restore, revert) when you run `simplenote-mcp setup` with write mode enabled.
 
-On macOS, it reads directly from the local Simplenote desktop app's Core Data store — fully offline, no auth. On Linux and Windows (and on macOS without the desktop app), it talks to the Simperium HTTP API after a one-time `simplenote-mcp login`.
+On macOS, it can read directly from the local Simplenote desktop app's Core Data store — fully offline, no auth. On Linux and Windows (and on macOS without the desktop app), it talks to the Simperium HTTP API after a one-time `simplenote-mcp setup`.
 
 Works with Claude Desktop, Claude Code, Cursor, VS Code (Copilot), Zed, Cline, Windsurf, and anything else that speaks MCP.
 
 ## Quick start
 
-For macOS users with the [Simplenote desktop app](https://simplenote.com/) already installed and synced — no login required, no env vars, just point your MCP client at it.
+Run setup once:
+
+```bash
+npx -y simplenote-mcp setup
+```
+
+On macOS with the [Simplenote desktop app](https://simplenote.com/) installed and synced, setup detects the local database and asks whether to use it. Accepting that option is fully offline and read-only. On Linux, Windows, or macOS without the desktop app, setup prompts for your Simplenote email, sends an auth code, then asks for the code and whether to enable write mode.
+
+Then point your MCP client at the server.
 
 **Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 
@@ -23,16 +31,14 @@ For macOS users with the [Simplenote desktop app](https://simplenote.com/) alrea
 }
 ```
 
-Restart the client and ask it to list your tags. That's it.
-
-For Linux / Windows, or macOS without the desktop app, see [Authentication](#authentication) for the one-time login step, then apply the same config.
+Restart the client and ask it to list your tags.
 
 ## Requirements
 
 - Node.js 22+
 - One of:
   - **macOS:** the [Simplenote desktop app](https://simplenote.com/) installed and synced, **or**
-  - Any platform: a Simplenote account (you'll run `simplenote-mcp login` once)
+  - Any platform: a Simplenote account (you'll run `simplenote-mcp setup` once)
 
 ## Install
 
@@ -46,17 +52,19 @@ npm install -g simplenote-mcp
 
 Then reference `simplenote-mcp` directly as the `command` in your MCP config.
 
-## Authentication
+## Setup and Authentication
 
-Skip this section if you only intend to use the native macOS data source.
+Run setup once to create `config.json`. Native macOS setup does not require Simplenote authentication; API setup does.
 
-### One-time login
+### One-time setup
 
 ```bash
-npx simplenote-mcp login
+npx -y simplenote-mcp setup
 ```
 
-Prompts for your Simplenote email, sends a magic-link email containing a short auth code, then prompts for the code. On success, a token is written with mode `0600` to:
+If a local macOS Simplenote database is detected, setup offers to use it and writes `config.json` with `source: "local"`.
+
+Otherwise, setup checks for an existing token in `auth.json`. If one is already stored, setup reuses it and only asks whether to enable write mode. If no token is stored, setup prompts for your Simplenote email, sends a magic-link email containing a short auth code, prompts for the code, and then asks whether to enable write mode. On success, it writes `config.json` and stores the token with mode `0600` in `auth.json`.
 
 | Platform | Path |
 |----------|------|
@@ -64,25 +72,38 @@ Prompts for your Simplenote email, sends a magic-link email containing a short a
 | Linux    | `$XDG_CONFIG_HOME/simplenote-mcp/auth.json` (default `~/.config/simplenote-mcp/auth.json`) |
 | Windows  | `%APPDATA%\simplenote-mcp\auth.json` |
 
+`config.json` and `telemetry.json` live in the same `simplenote-mcp` config directory.
+
 To remove the stored token:
 
 ```bash
-npx simplenote-mcp logout
+npx -y simplenote-mcp logout
 ```
 
 ### Headless / CI
 
-Skip the file entirely by exporting the token directly:
+Skip `auth.json` by exporting the token directly:
 
 ```bash
-SIMPLENOTE_TOKEN=<token> npx simplenote-mcp
+SIMPLENOTE_TOKEN=<token> npx -y simplenote-mcp
 ```
 
-The env var bypasses `auth.json`. Prefer it over a CLI flag — argv values appear in `ps` output and shell history.
+The env var bypasses `auth.json`.
+
+`SIMPLENOTE_TOKEN` does not bypass `config.json`; the server still needs config to know whether to use the local store or the API provider. For headless environments, create `config.json` in the same platform-specific config directory listed above:
+
+```json
+{
+  "source": "api",
+  "writeMode": false
+}
+```
+
+Set `writeMode` to `true` only when you want write tools exposed.
 
 ### Token lifetime
 
-Magic-link tokens appear sticky per user (re-running `login` returns the same token until invalidated server-side). No expiry has been observed in normal use; treat any 401 from the Simperium API as "re-run `login`." There is no automatic refresh — magic-link auth requires user interaction. The login endpoint is rate-limited (repeated failures lock the IP out for ~10 minutes), so don't script repeated attempts.
+Magic-link tokens appear sticky per user (requesting a new code often returns the same token until invalidated server-side). No expiry has been observed in normal use; treat any 401 from the Simperium API as "remove the old token and run setup again." There is no automatic refresh — magic-link auth requires user interaction. The authentication endpoint is rate-limited (repeated failures lock the IP out for ~10 minutes), so don't script repeated attempts.
 
 ## Configuration
 
@@ -103,7 +124,7 @@ All MCP clients converge on the same `{ command, args, env }` shape. The only th
 }
 ```
 
-For the Simperium API path (Linux, Windows, or macOS without the desktop app), run `npx simplenote-mcp login` once in a terminal before starting the client.
+Run `npx -y simplenote-mcp setup` once in a terminal before starting the client.
 
 Restart Claude Desktop to pick up config changes. See [Windows notes](#windows-notes) below for Windows-specific quirks.
 
@@ -165,7 +186,7 @@ Open the Cline MCP Servers panel → edit `cline_mcp_settings.json`. Same JSON s
 
 ### Custom store path (macOS)
 
-If the server can't find your Simplenote data automatically:
+If your local Simplenote data is not at the default path:
 
 1. Open Finder, press `Cmd+Shift+G`, paste `~/Library/Group Containers/`
 2. Look for a folder starting with `com.automattic.SimplenoteMac` (typically prefixed like `PZYM8XX95Q.`)
@@ -213,16 +234,18 @@ When running from a local checkout after building, `node server.js disable-telem
 
 ## Provider resolution
 
-The server picks a data source automatically:
+The server chooses a data source from `config.json`, except when `--path` is provided:
 
 1. `--path <file>` — forces the native macOS provider against the given store file
-2. macOS, with the Simplenote app's default Core Data store present — native provider
-3. A token is available (file or `SIMPLENOTE_TOKEN`) — Simperium API provider
-4. Otherwise — exits with an actionable error message
+2. `source: "local"` — uses the default macOS Simplenote store, read-only
+3. `source: "api"` plus `auth.json` or `SIMPLENOTE_TOKEN` — uses the Simperium API provider
+4. Missing or malformed config — exits with an actionable `simplenote-mcp setup` message
 
-This means a macOS user with the desktop app gets fully offline access with no setup, while Windows/Linux users get the API path after `login`.
+Run `simplenote-mcp setup` to create or replace the config. A token alone is not enough to select the API provider.
 
 ## Available tools
+
+The basic read tools are available for whichever provider is configured. Native macOS mode is local and read-only. Write tools and version-history tools require the Simperium API provider; in the current server they are exposed when API write mode is enabled.
 
 ### list_tags
 
@@ -239,8 +262,9 @@ List recent notes, optionally filtered by tag.
 **Parameters:**
 - `tag` (string, optional) — filter by tag name
 - `limit` (number, optional, default: 20, max: 100) — max notes to return
+- `include_deleted` (boolean, optional, default: false) — include trashed notes
 
-**Returns:** Array of `{id, title, tags, pinned, modified}` sorted by pinned status then modification date
+**Returns:** Array of `{id, title, tags, pinned, modified, deleted}` sorted by pinned status then modification date
 
 ### search_notes
 
@@ -312,7 +336,7 @@ Restore a previously-trashed note so it reappears in active lists. Inverse of `t
 
 ### get_note_history
 
-List recent versions of a note with short content previews. Read-only.
+List recent versions of a note with short content previews. Read-only operation; requires the Simperium API provider with write mode enabled in the current server.
 
 **Parameters:**
 - `id` (string, required) — note ID
@@ -322,7 +346,7 @@ List recent versions of a note with short content previews. Read-only.
 
 ### get_note_version
 
-Get the full content of a specific historical version of a note. Read-only. Use to preview content before calling `revert_note`.
+Get the full content of a specific historical version of a note. Read-only operation; requires the Simperium API provider with write mode enabled in the current server. Use to preview content before calling `revert_note`.
 
 **Parameters:**
 - `id` (string, required) — note ID
@@ -388,14 +412,17 @@ A few Windows-specific quirks worth knowing:
 
 ## Troubleshooting
 
-**"Not logged in. Run `simplenote-mcp login`..."**
-You're on the Simperium API path without a token. Run `npx simplenote-mcp login` in a terminal.
+**"No configuration found. Run `simplenote-mcp setup`..."**
+Run `npx -y simplenote-mcp setup` once before starting your MCP client.
+
+**"Not logged in. Run `simplenote-mcp setup`..."**
+You're on the Simperium API path without a token. Run `npx -y simplenote-mcp setup` in a terminal.
 
 **"Token rejected."**
-The token may have been invalidated server-side. Re-run `npx simplenote-mcp login`.
+The token may have been invalidated server-side. Run `npx -y simplenote-mcp logout`, then `npx -y simplenote-mcp setup`.
 
 **Tools list empty / "Simplenote store not found"**
-On macOS the default path is `~/Library/Group Containers/PZYM8XX95Q.com.automattic.SimplenoteMac/Data/Simplenote.storedata`. If your store lives elsewhere, pass `--path`. If you don't have the desktop app, switch to the API path with `simplenote-mcp login`.
+On macOS the default path is `~/Library/Group Containers/PZYM8XX95Q.com.automattic.SimplenoteMac/Data/Simplenote.storedata`. If your store lives elsewhere, pass `--path`. If you don't have the desktop app, switch to the API path with `simplenote-mcp setup`.
 
 **First tool call is very slow**
 `npx -y` downloads the package on first use. On slow networks this can exceed the MCP client's startup timeout (~10s). Either wait for it to warm up, or install globally once: `npm install -g simplenote-mcp` and change `"command": "npx"` to `"command": "simplenote-mcp"` (drop the args).
@@ -403,8 +430,8 @@ On macOS the default path is `~/Library/Group Containers/PZYM8XX95Q.com.automatt
 **"command not found: npx" / "spawn npx ENOENT" on Windows**
 See the `cmd /c` wrapping in [Windows notes](#windows-notes).
 
-**Login emails aren't arriving**
-Check spam. The login endpoint is rate-limited — multiple failures in quick succession will lock the IP out for ~10 minutes. Wait, then try again.
+**Setup emails aren't arriving**
+Check spam. The authentication endpoint is rate-limited — multiple failures in quick succession will lock the IP out for ~10 minutes. Wait, then try again.
 
 **Everything looks fine but data seems stale**
 Simperium responses are cached for 60 seconds; the native macOS provider refreshes when the store file's mtime changes. Wait a minute, or restart the MCP client to force a re-fetch.
@@ -430,7 +457,7 @@ npm run build        # tsc + chmod +x on the bin
 
 ```bash
 npm run build
-npx @modelcontextprotocol/inspector node dist/server.js
+npm run inspect
 ```
 
 Open the URL it prints and click **Connect**.
