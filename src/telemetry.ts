@@ -6,8 +6,8 @@ import { dirname } from 'node:path';
 import type { ParsedUrlQueryInput } from 'node:querystring';
 import { getTelemetryPath } from './providers/paths.js';
 
-export const TELEMETRY_USER_TYPE = 'simplenote_mcp';
-const TELEMETRY_EVENT_PREFIX = 'simplenote_mcp';
+export const TELEMETRY_USER_TYPE = 'simplenote:local_uuid';
+const TELEMETRY_EVENT_PREFIX = 'spmcp';
 const DISABLE_ENV_VAR = 'SIMPLENOTE_MCP_DISABLE_TELEMETRY';
 const TRACKS_EVENT_TIMEOUT_MS = 1500;
 

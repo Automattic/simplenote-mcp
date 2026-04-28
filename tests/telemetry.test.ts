@@ -68,7 +68,7 @@ describe('createTelemetry', () => {
 	const tmp = useTmpDir('simplenote-mcp-telemetry-');
 
 	it('uses the Simplenote MCP Tracks user type', () => {
-		assert.equal(TELEMETRY_USER_TYPE, 'simplenote_mcp');
+		assert.equal(TELEMETRY_USER_TYPE, 'simplenote:local_uuid');
 	});
 
 	it('maps setup calls to anonymous Tracks properties', async () => {
