@@ -4,6 +4,7 @@ import { join } from 'node:path';
 const APP_NAME = 'simplenote-mcp';
 const TOKEN_FILE = 'auth.json';
 const CONFIG_FILE = 'config.json';
+const TELEMETRY_FILE = 'telemetry.json';
 
 export type PathContext = {
 	platform: NodeJS.Platform;
@@ -37,4 +38,8 @@ export function getTokenPath(ctx?: PathContext): string {
 
 export function getConfigPath(ctx?: PathContext): string {
 	return join(getConfigDir(ctx), CONFIG_FILE);
+}
+
+export function getTelemetryPath(ctx?: PathContext): string {
+	return join(getConfigDir(ctx), TELEMETRY_FILE);
 }

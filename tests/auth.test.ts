@@ -56,7 +56,9 @@ describe('requestLoginCode', () => {
 		let observedBody: unknown;
 		mockFetch(async (url, init) => {
 			observedUrl = String(url);
-			observedBody = JSON.parse(init!.body as string);
+			assert.ok(init, 'expected fetch to be called with an init object');
+			assert.equal(typeof init.body, 'string', 'expected fetch init.body to be a string');
+			observedBody = JSON.parse(init.body as string);
 			return new Response('', { status: 200 });
 		});
 		await requestLoginCode('alice@example.com');
