@@ -9,8 +9,15 @@ import {
 	rawNoteResponse,
 } from './helpers/simperium.ts';
 
-const { normalizeNote, normalizeTag, toBool, toIsoFromUnix, mergeSystemTags, simperiumRequest } =
-	_test;
+const {
+	normalizeNote,
+	normalizeTag,
+	toBool,
+	toIsoFromUnix,
+	mergeSystemTags,
+	simperiumRequest,
+	fetchNoteVersion,
+} = _test;
 
 // Pin SIMPLENOTE_TOKEN to a known value per test, and reset mocks afterwards.
 // Harmless for the pure-helper suites below (which don't make HTTP calls).
@@ -316,6 +323,47 @@ describe('simperiumRequest', () => {
 				}),
 			(err: unknown) => err instanceof ApiError && err.code === 'unauthorized',
 		);
+	});
+});
+
+// ---------- fetchNoteVersion ----------
+
+describe('fetchNoteVersion', () => {
+	it('GETs /note/i/{id}/v/{version} and returns the body', async () => {
+		const captured = captureFetch((url) => {
+			if (/\/note\/i\/abc\/v\/3$/.test(url)) {
+				return new Response(
+					JSON.stringify({ content: 'old text', tags: ['t'] }),
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				);
+			}
+			throw new Error(`Unexpected fetch: ${url}`);
+		});
+
+		const result = await fetchNoteVersion('abc', 3, 'test-token');
+
+		assert.equal(result.content, 'old text');
+		assert.deepEqual(result.tags, ['t']);
+		assert.equal(captured.calls.length, 1);
+		assert.match(captured.calls[0]!.url, /\/note\/i\/abc\/v\/3$/);
+	});
+
+	it('throws ApiError(version_not_found) on 404', async () => {
+		captureFetch(() => new Response('', { status: 404 }));
+		await assert.rejects(
+			() => fetchNoteVersion('abc', 999, 'test-token'),
+			(err: ApiError) =>
+				err instanceof ApiError &&
+				err.code === 'version_not_found' &&
+				err.message.includes('999') &&
+				err.message.includes('abc'),
+		);
+	});
+
+	it('URL-encodes the note id', async () => {
+		const captured = captureFetch(() => new Response('{}', { status: 200 }));
+		await fetchNoteVersion('../tag/i/x', 1, 't');
+		assert.ok(captured.calls[0]!.url.endsWith('/note/i/..%2Ftag%2Fi%2Fx/v/1'));
 	});
 });
 
@@ -923,6 +971,368 @@ describe('updateNote', () => {
 	});
 });
 
+describe('getNoteVersion', () => {
+	it('returns a normalized note with the requested version', async () => {
+		const provider = createApiProvider();
+		captureFetch((url) => {
+			if (/\/note\/i\/note-1\/v\/5$/.test(url)) {
+				return new Response(
+					JSON.stringify({
+						content: 'Old title\nbody',
+						tags: ['work'],
+						systemTags: ['markdown'],
+						deleted: false,
+						creationDate: 1700000000,
+						modificationDate: 1700000100,
+					}),
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				);
+			}
+			throw new Error(`Unexpected fetch: ${url}`);
+		});
+
+		const result = await provider.getNoteVersion!('note-1', 5);
+
+		assert.equal(result.id, 'note-1');
+		assert.equal(result.version, 5);
+		assert.equal(result.content, 'Old title\nbody');
+		assert.deepEqual(result.tags, ['work']);
+		assert.equal(result.markdown, true);
+		assert.equal(result.deleted, false);
+		assert.equal(result.modified, '2023-11-14T22:15:00.000Z');
+	});
+
+	it('throws version_not_found on 404', async () => {
+		const provider = createApiProvider();
+		captureFetch(() => new Response('', { status: 404 }));
+		await assert.rejects(
+			() => provider.getNoteVersion!('note-1', 999),
+			(err: ApiError) =>
+				err instanceof ApiError && err.code === 'version_not_found',
+		);
+	});
+
+	it('rejects non-positive version before any fetch', async () => {
+		const provider = createApiProvider();
+		let fetched = false;
+		mockFetch(async () => {
+			fetched = true;
+			return new Response('{}', { status: 200 });
+		});
+		await assert.rejects(() => provider.getNoteVersion!('note-1', 0));
+		await assert.rejects(() => provider.getNoteVersion!('note-1', -1));
+		await assert.rejects(() => provider.getNoteVersion!('note-1', 1.5));
+		assert.equal(fetched, false);
+	});
+
+	it('does not consume the write budget', async () => {
+		const provider = createApiProvider();
+		// Saturate the budget with successful updates first.
+		captureFetch((url, init) => {
+			if (isRawNoteGet(url, init?.method)) {
+				return rawNoteResponse({ content: 'orig' });
+			}
+			if (isNotePost(init?.method)) {
+				return new Response('2', { status: 200 });
+			}
+			if (/\/v\/\d+$/.test(url)) {
+				return new Response(
+					JSON.stringify({ content: 'v', modificationDate: 1700000100 }),
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				);
+			}
+			throw new Error(`Unexpected fetch: ${init?.method} ${url}`);
+		});
+		for (let i = 0; i < 5; i++) {
+			await provider.updateNote!({ id: 'note-1', content: `change ${i}` });
+		}
+		// updateNote would now throw rate_limited; getNoteVersion must not.
+		const result = await provider.getNoteVersion!('note-1', 1);
+		assert.equal(result.id, 'note-1');
+	});
+});
+
+describe('getNoteHistory', () => {
+	it('returns entries sorted descending by version with code-point-safe previews', async () => {
+		const provider = createApiProvider();
+		captureFetch((url, init) => {
+			if (isRawNoteGet(url, init?.method) && url.endsWith('/note/i/note-1')) {
+				return rawNoteResponse(
+					{ content: 'current content', modificationDate: 1700000300 },
+					{ version: 3 },
+				);
+			}
+			const m = url.match(/\/note\/i\/note-1\/v\/(\d+)$/);
+			if (m) {
+				const v = Number(m[1]);
+				return new Response(
+					JSON.stringify({
+						content: `version-${v} content`,
+						modificationDate: 1700000000 + v * 100,
+					}),
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				);
+			}
+			throw new Error(`Unexpected fetch: ${init?.method} ${url}`);
+		});
+
+		const result = await provider.getNoteHistory!('note-1', 10);
+
+		assert.equal(result.id, 'note-1');
+		assert.equal(result.current_version, 3);
+		assert.equal(result.entries.length, 3);
+		assert.deepEqual(
+			result.entries.map((e) => e.version),
+			[3, 2, 1],
+		);
+		assert.equal(result.entries[0]!.content_preview, 'version-3 content');
+		assert.match(result.entries[0]!.modified_at!, /^2023-/);
+	});
+
+	it('truncates content_preview to 100 code points with a single-char ellipsis', async () => {
+		const provider = createApiProvider();
+		// 150 chars, all ASCII.
+		const longContent = 'x'.repeat(150);
+		captureFetch((url, init) => {
+			if (isRawNoteGet(url, init?.method)) {
+				return rawNoteResponse({ content: longContent }, { version: 1 });
+			}
+			if (/\/v\/1$/.test(url)) {
+				return new Response(
+					JSON.stringify({ content: longContent, modificationDate: 1700000000 }),
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				);
+			}
+			throw new Error(`Unexpected fetch: ${init?.method} ${url}`);
+		});
+
+		const result = await provider.getNoteHistory!('note-1', 5);
+
+		const preview = result.entries[0]!.content_preview;
+		assert.equal(Array.from(preview).length, 101);
+		assert.ok(preview.endsWith('…'));
+	});
+
+	it('handles multi-byte content without splitting code points', async () => {
+		const provider = createApiProvider();
+		// One ASCII char + 120 emoji misaligns the UTF-16 boundary at position 100:
+		// a naive `slice(0, 100)` would slice between the surrogate halves of the
+		// 50th emoji, producing an invalid string. Code-point-safe truncation
+		// must land on a complete emoji.
+		const mixedContent = 'a' + '😀'.repeat(120);
+		captureFetch((url, init) => {
+			if (isRawNoteGet(url, init?.method)) {
+				return rawNoteResponse({ content: mixedContent }, { version: 1 });
+			}
+			if (/\/v\/1$/.test(url)) {
+				return new Response(
+					JSON.stringify({ content: mixedContent, modificationDate: 1700000000 }),
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				);
+			}
+			throw new Error(`Unexpected fetch: ${init?.method} ${url}`);
+		});
+
+		const result = await provider.getNoteHistory!('note-1', 5);
+
+		const preview = result.entries[0]!.content_preview;
+		// 1 ASCII + 99 emoji + 1 ellipsis = 101 code points.
+		assert.equal(Array.from(preview).length, 101);
+		assert.equal(preview, 'a' + '😀'.repeat(99) + '…');
+	});
+
+	it('caps concurrent version fetches at HISTORY_FETCH_CONCURRENCY', async () => {
+		const provider = createApiProvider();
+		let inflight = 0;
+		let maxInflight = 0;
+		captureFetch((url, init) => {
+			if (isRawNoteGet(url, init?.method)) {
+				return rawNoteResponse({ content: 'curr' }, { version: 25 });
+			}
+			if (/\/v\/\d+$/.test(url)) {
+				inflight++;
+				maxInflight = Math.max(maxInflight, inflight);
+				return new Promise<Response>((resolve) => {
+					setTimeout(() => {
+						inflight--;
+						resolve(
+							new Response(
+								JSON.stringify({ content: 'v', modificationDate: 1700000000 }),
+								{ status: 200, headers: { 'content-type': 'application/json' } },
+							),
+						);
+					}, 5);
+				});
+			}
+			throw new Error(`Unexpected fetch: ${init?.method} ${url}`);
+		});
+
+		await provider.getNoteHistory!('note-1', 25);
+
+		assert.ok(maxInflight <= 8, `expected max in-flight <= 8, got ${maxInflight}`);
+		assert.ok(maxInflight > 1, `expected concurrency > 1 (parallelism is real), got ${maxInflight}`);
+	});
+
+	it('drops pruned versions silently (404), exposing the gap via version numbers', async () => {
+		const provider = createApiProvider();
+		captureFetch((url, init) => {
+			if (isRawNoteGet(url, init?.method) && url.endsWith('/note/i/note-1')) {
+				return rawNoteResponse({ content: 'curr' }, { version: 5 });
+			}
+			const m = url.match(/\/v\/(\d+)$/);
+			if (m) {
+				const v = Number(m[1]);
+				if (v === 3 || v === 2) {
+					return new Response('', { status: 404 });
+				}
+				return new Response(
+					JSON.stringify({ content: `v${v}`, modificationDate: 1700000000 }),
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				);
+			}
+			throw new Error(`Unexpected fetch: ${init?.method} ${url}`);
+		});
+
+		const result = await provider.getNoteHistory!('note-1', 5);
+
+		assert.equal(result.current_version, 5);
+		assert.deepEqual(
+			result.entries.map((e) => e.version),
+			[5, 4, 1],
+		);
+	});
+
+	it('returns entries: [] when current_version is 0 (defensive short-circuit)', async () => {
+		const provider = createApiProvider();
+		let versionFetches = 0;
+		captureFetch((url, init) => {
+			if (isRawNoteGet(url, init?.method)) {
+				return rawNoteResponse({ content: 'x' }, { version: 0 });
+			}
+			if (/\/v\/\d+$/.test(url)) {
+				versionFetches++;
+				return new Response('{}', { status: 200 });
+			}
+			throw new Error(`Unexpected fetch: ${init?.method} ${url}`);
+		});
+
+		const result = await provider.getNoteHistory!('note-1', 10);
+
+		assert.equal(result.current_version, 0);
+		assert.deepEqual(result.entries, []);
+		assert.equal(versionFetches, 0);
+	});
+
+	it('returns entries for a trashed note including pre-trash versions', async () => {
+		const provider = createApiProvider();
+		captureFetch((url, init) => {
+			if (isRawNoteGet(url, init?.method)) {
+				return rawNoteResponse(
+					{ content: 'trashed now', deleted: true, modificationDate: 1700000300 },
+					{ version: 3 },
+				);
+			}
+			const m = url.match(/\/v\/(\d+)$/);
+			if (m) {
+				const v = Number(m[1]);
+				return new Response(
+					JSON.stringify({
+						content: `v${v}`,
+						deleted: v === 3, // only the latest version is trashed
+						modificationDate: 1700000000 + v * 100,
+					}),
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				);
+			}
+			throw new Error(`Unexpected fetch: ${init?.method} ${url}`);
+		});
+
+		const result = await provider.getNoteHistory!('note-1', 10);
+
+		assert.equal(result.entries.length, 3);
+		// No deleted/state filtering — caller can inspect previews if needed.
+	});
+
+	it('exposes null modified_at when the version body lacks modificationDate', async () => {
+		const provider = createApiProvider();
+		captureFetch((url, init) => {
+			if (isRawNoteGet(url, init?.method)) {
+				return rawNoteResponse({ content: 'x' }, { version: 1 });
+			}
+			if (/\/v\/1$/.test(url)) {
+				return new Response(
+					JSON.stringify({ content: 'no-date' }), // no modificationDate
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				);
+			}
+			throw new Error(`Unexpected fetch: ${init?.method} ${url}`);
+		});
+
+		const result = await provider.getNoteHistory!('note-1', 5);
+
+		assert.equal(result.entries[0]!.modified_at, null);
+	});
+
+	it('rejects out-of-range limit before any fetch', async () => {
+		const provider = createApiProvider();
+		let fetched = false;
+		mockFetch(async () => {
+			fetched = true;
+			return new Response('{}', { status: 200 });
+		});
+		await assert.rejects(() => provider.getNoteHistory!('note-1', 0));
+		await assert.rejects(() => provider.getNoteHistory!('note-1', 26));
+		await assert.rejects(() => provider.getNoteHistory!('note-1', 1.5));
+		assert.equal(fetched, false);
+	});
+
+	it('does not consume the write budget', async () => {
+		const provider = createApiProvider();
+		captureFetch((url, init) => {
+			if (isRawNoteGet(url, init?.method)) {
+				return rawNoteResponse({ content: 'orig' }, { version: 1 });
+			}
+			if (isNotePost(init?.method)) {
+				return new Response('2', { status: 200 });
+			}
+			if (/\/v\/\d+$/.test(url)) {
+				return new Response(
+					JSON.stringify({ content: 'v', modificationDate: 1700000000 }),
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				);
+			}
+			throw new Error(`Unexpected fetch: ${init?.method} ${url}`);
+		});
+		for (let i = 0; i < 5; i++) {
+			await provider.updateNote!({ id: 'note-1', content: `change ${i}` });
+		}
+		const result = await provider.getNoteHistory!('note-1', 5);
+		assert.equal(result.current_version, 1);
+	});
+
+	it('URL-encodes the note id on both current and version GETs', async () => {
+		const provider = createApiProvider();
+		const captured = captureFetch((url, init) => {
+			if (isRawNoteGet(url, init?.method)) {
+				return rawNoteResponse({ content: 'x' }, { version: 1 });
+			}
+			if (/\/v\/\d+$/.test(url)) {
+				return new Response(
+					JSON.stringify({ content: 'v', modificationDate: 1700000000 }),
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				);
+			}
+			throw new Error(`Unexpected fetch: ${init?.method} ${url}`);
+		});
+
+		await provider.getNoteHistory!('../tag/i/x', 3);
+
+		for (const call of captured.calls) {
+			assert.ok(call.url.includes('..%2Ftag%2Fi%2Fx'));
+		}
+	});
+});
+
 // trashNote and restoreNote are mirror operations: each GETs the current
 // note, decides whether to POST a state-flipped copy, and otherwise behaves
 // the same on the wire (same URL shape, same headers, same error matrix,
@@ -1450,5 +1860,267 @@ describe('loadStore stale-cache fallback', () => {
 			() => provider.loadStore(),
 			(err: unknown) => err instanceof ApiError && err.code === 'invalid_response',
 		);
+	});
+});
+
+type RevertSpec = {
+	label: string;
+	startDeleted: boolean;
+	targetDeleted: boolean;
+};
+
+function describeRevertToggle(spec: RevertSpec): void {
+	const { label, startDeleted, targetDeleted } = spec;
+
+	describe(`revertNote (${label})`, () => {
+		it('overlays target content/tags/systemTags/deleted onto current and POSTs', async () => {
+			const provider = createApiProvider();
+			const captured = captureFetch((url, init) => {
+				if (isRawNoteGet(url, init?.method)) {
+					return rawNoteResponse(
+						{
+							content: 'current content',
+							tags: ['current-tag'],
+							systemTags: ['markdown'],
+							deleted: startDeleted,
+							publishURL: 'https://simp.ly/p/keep',
+							shareURL: 'https://simp.ly/s/keep',
+						},
+						{ version: 5 },
+					);
+				}
+				if (/\/note\/i\/note-1\/v\/2$/.test(url)) {
+					return new Response(
+						JSON.stringify({
+							content: 'old content',
+							tags: ['old-tag'],
+							systemTags: ['markdown', 'pinned'],
+							deleted: targetDeleted,
+							modificationDate: 1700000000,
+						}),
+						{ status: 200, headers: { 'content-type': 'application/json' } },
+					);
+				}
+				if (isNotePost(init?.method)) {
+					return new Response('6', { status: 200 });
+				}
+				throw new Error(`Unexpected fetch: ${init?.method} ${url}`);
+			});
+
+			const before = Math.floor(Date.now() / 1000);
+			const result = await provider.revertNote!({ id: 'note-1', version: 2 });
+			const after = Math.floor(Date.now() / 1000);
+
+			const post = captured.calls.find((c) => c.method === 'POST')!;
+			const body = post.body as Record<string, unknown>;
+
+			assert.match(post.url, /\/note\/i\/note-1\?ccid=/);
+			assert.equal(post.headers['Content-Type'], 'application/json');
+			assert.equal(body.content, 'old content');
+			assert.deepEqual(body.tags, ['old-tag']);
+			assert.deepEqual(body.systemTags, ['markdown', 'pinned']);
+			assert.equal(body.deleted, targetDeleted);
+			// Untracked fields preserved from current.
+			assert.equal(body.publishURL, 'https://simp.ly/p/keep');
+			assert.equal(body.shareURL, 'https://simp.ly/s/keep');
+			// Fresh modificationDate.
+			const modDate = body.modificationDate as number;
+			assert.ok(modDate >= before && modDate <= after);
+
+			assert.deepEqual(result, {
+				id: 'note-1',
+				reverted_from_version: 2,
+				new_version: 6,
+				no_op: false,
+			});
+		});
+
+		it('throws rate_limited before any POST when budget is exhausted', async () => {
+			const provider = createApiProvider();
+			let postCount = 0;
+			captureFetch((url, init) => {
+				if (isRawNoteGet(url, init?.method)) {
+					return rawNoteResponse(
+						{ content: 'c', deleted: startDeleted },
+						{ version: 5 },
+					);
+				}
+				if (/\/v\/2$/.test(url)) {
+					return new Response(
+						JSON.stringify({
+							content: 'old',
+							deleted: targetDeleted,
+							modificationDate: 1700000000,
+						}),
+						{ status: 200, headers: { 'content-type': 'application/json' } },
+					);
+				}
+				if (isNotePost(init?.method)) {
+					postCount++;
+					return new Response('6', { status: 200 });
+				}
+				throw new Error(`Unexpected fetch: ${init?.method} ${url}`);
+			});
+
+			// Saturate via 5 successful reverts. Each one POSTs once.
+			for (let i = 0; i < 5; i++) {
+				await provider.revertNote!({ id: 'note-1', version: 2 });
+			}
+			const postsBefore = postCount;
+			await assert.rejects(
+				() => provider.revertNote!({ id: 'note-1', version: 2 }),
+				(err: ApiError) =>
+					err instanceof ApiError && err.code === 'rate_limited',
+			);
+			assert.equal(postCount, postsBefore, 'no POST should have been issued');
+		});
+	});
+}
+
+describeRevertToggle({ label: 'live → live', startDeleted: false, targetDeleted: false });
+describeRevertToggle({ label: 'trashed → live (un-trash)', startDeleted: true, targetDeleted: false });
+describeRevertToggle({ label: 'live → trashed (re-trash)', startDeleted: false, targetDeleted: true });
+describeRevertToggle({ label: 'trashed → trashed', startDeleted: true, targetDeleted: true });
+
+describe('revertNote (no-op and errors)', () => {
+	it('short-circuits when target is identical to current — no POST', async () => {
+		const provider = createApiProvider();
+		let postCount = 0;
+		captureFetch((url, init) => {
+			if (isRawNoteGet(url, init?.method)) {
+				return rawNoteResponse(
+					{
+						content: 'same',
+						tags: ['t'],
+						systemTags: ['markdown'],
+						deleted: false,
+					},
+					{ version: 5 },
+				);
+			}
+			if (/\/v\/2$/.test(url)) {
+				return new Response(
+					JSON.stringify({
+						content: 'same',
+						tags: ['t'],
+						systemTags: ['markdown'],
+						deleted: false,
+						modificationDate: 1700000000,
+					}),
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				);
+			}
+			if (isNotePost(init?.method)) {
+				postCount++;
+				return new Response('6', { status: 200 });
+			}
+			throw new Error(`Unexpected fetch: ${init?.method} ${url}`);
+		});
+
+		const result = await provider.revertNote!({ id: 'note-1', version: 2 });
+
+		assert.equal(postCount, 0);
+		assert.deepEqual(result, {
+			id: 'note-1',
+			reverted_from_version: 2,
+			new_version: 5,
+			no_op: true,
+		});
+	});
+
+	it('does not consume budget on no-op', async () => {
+		const provider = createApiProvider();
+		captureFetch((url, init) => {
+			if (isRawNoteGet(url, init?.method)) {
+				return rawNoteResponse(
+					{ content: 'same', deleted: false },
+					{ version: 1 },
+				);
+			}
+			if (/\/v\/1$/.test(url)) {
+				return new Response(
+					JSON.stringify({
+						content: 'same',
+						deleted: false,
+						modificationDate: 1700000000,
+					}),
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				);
+			}
+			if (isNotePost(init?.method)) {
+				return new Response('2', { status: 200 });
+			}
+			throw new Error(`Unexpected fetch: ${init?.method} ${url}`);
+		});
+		// 5 no-op reverts must not exhaust the budget.
+		for (let i = 0; i < 5; i++) {
+			await provider.revertNote!({ id: 'note-1', version: 1 });
+		}
+		// A 6th call still works (would throw if budget were spent).
+		const result = await provider.revertNote!({ id: 'note-1', version: 1 });
+		assert.equal(result.no_op, true);
+	});
+
+	it('surfaces version_not_found when the target version GET 404s', async () => {
+		const provider = createApiProvider();
+		captureFetch((url, init) => {
+			if (isRawNoteGet(url, init?.method)) {
+				return rawNoteResponse({ content: 'c' }, { version: 5 });
+			}
+			if (/\/v\/999$/.test(url)) {
+				return new Response('', { status: 404 });
+			}
+			throw new Error(`Unexpected fetch: ${init?.method} ${url}`);
+		});
+
+		await assert.rejects(
+			() => provider.revertNote!({ id: 'note-1', version: 999 }),
+			(err: ApiError) =>
+				err instanceof ApiError && err.code === 'version_not_found',
+		);
+	});
+
+	it('surfaces not_found when the current-state GET 404s', async () => {
+		const provider = createApiProvider();
+		captureFetch(() => new Response('', { status: 404 }));
+		await assert.rejects(
+			() => provider.revertNote!({ id: 'note-1', version: 1 }),
+			(err: ApiError) => err instanceof ApiError && err.code === 'not_found',
+		);
+	});
+
+	it('prefers not_found over version_not_found when the note does not exist', async () => {
+		const provider = createApiProvider();
+		captureFetch((url, init) => {
+			if (isRawNoteGet(url, init?.method)) {
+				// Make the current-state GET resolve LATER so a naive Promise.all
+				// would race version_not_found ahead of not_found.
+				return new Promise<Response>((resolve) => {
+					setTimeout(() => resolve(new Response('', { status: 404 })), 20);
+				});
+			}
+			if (/\/v\/\d+$/.test(url)) {
+				return new Response('', { status: 404 });
+			}
+			throw new Error(`Unexpected fetch: ${init?.method} ${url}`);
+		});
+
+		await assert.rejects(
+			() => provider.revertNote!({ id: 'missing', version: 1 }),
+			(err: ApiError) => err instanceof ApiError && err.code === 'not_found',
+		);
+	});
+
+	it('rejects non-positive version before any fetch', async () => {
+		const provider = createApiProvider();
+		let fetched = false;
+		mockFetch(async () => {
+			fetched = true;
+			return new Response('{}', { status: 200 });
+		});
+		await assert.rejects(() => provider.revertNote!({ id: 'note-1', version: 0 }));
+		await assert.rejects(() => provider.revertNote!({ id: 'note-1', version: -1 }));
+		await assert.rejects(() => provider.revertNote!({ id: 'note-1', version: 1.5 }));
+		assert.equal(fetched, false);
 	});
 });
