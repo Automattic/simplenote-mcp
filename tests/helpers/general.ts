@@ -64,13 +64,17 @@ export type CapturedFetch = {
 	url: string;
 	method?: string;
 	headers: Record<string, string>;
+	/** Raw request body as supplied to fetch (string, Blob, etc.), or undefined. */
+	rawBody?: BodyInit;
+	/** JSON-parsed body when rawBody is a valid JSON string; the rawBody value otherwise (non-string BodyInit, or a string that is not valid JSON). */
 	body?: unknown;
 };
 
 // Wraps mockFetch to also record every call. The `respond` callback decides
 // what to return (often based on url/method); the returned `calls` array
-// fills in as fetch is called. JSON request bodies are parsed; non-JSON
-// bodies pass through as-is.
+// fills in as fetch is called. `rawBody` holds the original BodyInit value;
+// `body` is the JSON-parsed form when rawBody is a JSON string, or the
+// original value otherwise.
 export function captureFetch(
 	respond: (url: string, init?: RequestInit) => Response | Promise<Response>,
 ): { calls: CapturedFetch[] } {
@@ -79,17 +83,18 @@ export function captureFetch(
 		const headers = Object.fromEntries(
 			Object.entries(init?.headers ?? {}).map(([k, v]) => [k, String(v)]),
 		);
+		const rawBody = init?.body;
 		let body: unknown;
-		if (typeof init?.body === 'string') {
+		if (typeof rawBody === 'string') {
 			try {
-				body = JSON.parse(init.body);
+				body = JSON.parse(rawBody);
 			} catch {
-				body = init.body;
+				body = rawBody;
 			}
-		} else if (init?.body !== undefined) {
-			body = init.body;
+		} else if (rawBody !== undefined) {
+			body = rawBody;
 		}
-		calls.push({ url, method: init?.method, headers, body });
+		calls.push({ url, method: init?.method, headers, rawBody, body });
 		return respond(url, init);
 	});
 	return { calls };

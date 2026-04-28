@@ -232,6 +232,7 @@ describe('simperiumRequest', () => {
 			context: 'x',
 		});
 		assert.equal(captured.calls[0]!.headers['Content-Type'], 'application/json');
+		assert.equal(captured.calls[0]!.rawBody, JSON.stringify({ foo: 1 }));
 		assert.deepEqual(captured.calls[0]!.body, { foo: 1 });
 	});
 

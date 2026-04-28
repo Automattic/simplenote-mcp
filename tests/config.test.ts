@@ -35,65 +35,35 @@ describe('loadConfig', () => {
 		);
 	});
 
-	it("throws ConfigError('invalid') on malformed JSON", async () => {
-		const configPath = tmp.path('config.json');
-		await writeFile(configPath, 'not json');
-		await assert.rejects(
-			() => loadConfig({ configPath }),
-			(err: unknown) => err instanceof ConfigError && err.code === 'invalid',
-		);
-	});
+	// Each row asserts that loadConfig rejects with ConfigError('invalid')
+	// when the file on disk has the given body. The validation rules being
+	// exercised are documented in the `name` of each case — this is also the
+	// label the test reporter shows.
+	const invalidCases: Array<{ name: string; body: string }> = [
+		{ name: 'on malformed JSON', body: 'not json' },
+		{ name: 'on non-object JSON', body: JSON.stringify('scalar') },
+		{ name: 'when writeMode is missing', body: JSON.stringify({ source: 'api' }) },
+		{
+			name: 'when writeMode is non-boolean',
+			body: JSON.stringify({ source: 'api', writeMode: 'yes' }),
+		},
+		{ name: 'when source is missing', body: JSON.stringify({ writeMode: false }) },
+		{
+			name: "when source is not 'local' or 'api'",
+			body: JSON.stringify({ source: 'other', writeMode: false }),
+		},
+	];
 
-	it("throws ConfigError('invalid') on non-object JSON", async () => {
-		const configPath = tmp.path('config.json');
-		await writeFile(configPath, JSON.stringify('scalar'));
-		await assert.rejects(
-			() => loadConfig({ configPath }),
-			(err: unknown) => err instanceof ConfigError && err.code === 'invalid',
-		);
-	});
-
-	it("throws ConfigError('invalid') when writeMode is missing", async () => {
-		const configPath = tmp.path('config.json');
-		await writeFile(configPath, JSON.stringify({ source: 'api' }));
-		await assert.rejects(
-			() => loadConfig({ configPath }),
-			(err: unknown) => err instanceof ConfigError && err.code === 'invalid',
-		);
-	});
-
-	it("throws ConfigError('invalid') when writeMode is non-boolean", async () => {
-		const configPath = tmp.path('config.json');
-		await writeFile(
-			configPath,
-			JSON.stringify({ source: 'api', writeMode: 'yes' }),
-		);
-		await assert.rejects(
-			() => loadConfig({ configPath }),
-			(err: unknown) => err instanceof ConfigError && err.code === 'invalid',
-		);
-	});
-
-	it("throws ConfigError('invalid') when source is missing", async () => {
-		const configPath = tmp.path('config.json');
-		await writeFile(configPath, JSON.stringify({ writeMode: false }));
-		await assert.rejects(
-			() => loadConfig({ configPath }),
-			(err: unknown) => err instanceof ConfigError && err.code === 'invalid',
-		);
-	});
-
-	it("throws ConfigError('invalid') when source is not 'local' or 'api'", async () => {
-		const configPath = tmp.path('config.json');
-		await writeFile(
-			configPath,
-			JSON.stringify({ source: 'other', writeMode: false }),
-		);
-		await assert.rejects(
-			() => loadConfig({ configPath }),
-			(err: unknown) => err instanceof ConfigError && err.code === 'invalid',
-		);
-	});
+	for (const { name, body } of invalidCases) {
+		it(`throws ConfigError('invalid') ${name}`, async () => {
+			const configPath = tmp.path('config.json');
+			await writeFile(configPath, body);
+			await assert.rejects(
+				() => loadConfig({ configPath }),
+				(err: unknown) => err instanceof ConfigError && err.code === 'invalid',
+			);
+		});
+	}
 });
 
 describe('saveConfig', () => {
