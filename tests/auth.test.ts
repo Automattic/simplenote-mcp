@@ -1,6 +1,6 @@
 import { afterEach, describe, it, mock } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { chmod, stat, readFile, writeFile } from 'node:fs/promises';
+import { chmod, stat, readFile, symlink, writeFile } from 'node:fs/promises';
 import { platform } from 'node:os';
 import {
 	AuthError,
@@ -11,7 +11,7 @@ import {
 	saveToken,
 	_test,
 } from '../src/providers/auth.ts';
-import { mockFetch, useTmpDir } from './helpers/general.ts';
+import { captureConsole, mockFetch, useTmpDir } from './helpers/general.ts';
 
 const { extractToken, extractUsername } = _test;
 
@@ -194,16 +194,92 @@ describe('token file roundtrip (tmpdir)', () => {
 
 	it('loadToken returns null when file is invalid JSON', async () => {
 		const tokenPath = tmp.path('auth.json');
-		await writeFile(tokenPath, 'not json');
+		await writeFile(tokenPath, 'not json', { mode: 0o600 });
 		const out = await loadToken({ tokenPath, env: {} });
 		assert.equal(out, null);
 	});
 
 	it('loadToken returns null when token field is missing', async () => {
 		const tokenPath = tmp.path('auth.json');
-		await writeFile(tokenPath, JSON.stringify({ username: 'a@b.com' }));
+		await writeFile(tokenPath, JSON.stringify({ username: 'a@b.com' }), {
+			mode: 0o600,
+		});
 		const out = await loadToken({ tokenPath, env: {} });
 		assert.equal(out, null);
+	});
+
+	it('loadToken auto-repairs perms on a 0644 token file and warns', async (t) => {
+		if (platform() === 'win32') {
+			t.skip('POSIX permission model');
+			return;
+		}
+		const tokenPath = tmp.path('auth.json');
+		await writeFile(
+			tokenPath,
+			JSON.stringify({ username: 'a@b.com', token: 'tok' }),
+		);
+		await chmod(tokenPath, 0o644);
+
+		const stderr = captureConsole('error');
+		let out;
+		try {
+			out = await loadToken({ tokenPath, env: {} });
+		} finally {
+			stderr.restore();
+		}
+
+		assert.deepEqual(out, { username: 'a@b.com', token: 'tok' });
+		assert.equal((await stat(tokenPath)).mode & 0o777, 0o600);
+		assert.equal(stderr.lines.length, 1);
+		assert.match(stderr.lines[0], /Tightened .* permissions from 644 to 0600/);
+	});
+
+	it('loadToken does not chmod or warn when file is already 0600', async (t) => {
+		if (platform() === 'win32') {
+			t.skip('POSIX permission model');
+			return;
+		}
+		const tokenPath = tmp.path('auth.json');
+		await writeFile(
+			tokenPath,
+			JSON.stringify({ username: 'a@b.com', token: 'tok' }),
+			{ mode: 0o600 },
+		);
+
+		const stderr = captureConsole('error');
+		let out;
+		try {
+			out = await loadToken({ tokenPath, env: {} });
+		} finally {
+			stderr.restore();
+		}
+
+		assert.deepEqual(out, { username: 'a@b.com', token: 'tok' });
+		assert.equal(stderr.lines.length, 0);
+		assert.equal((await stat(tokenPath)).mode & 0o777, 0o600);
+	});
+
+	it('loadToken rejects a symlinked token file', async (t) => {
+		if (platform() === 'win32') {
+			t.skip('POSIX permission model');
+			return;
+		}
+		const target = tmp.path('target.json');
+		await writeFile(
+			target,
+			JSON.stringify({ username: 'a@b.com', token: 'tok' }),
+			{ mode: 0o600 },
+		);
+		const tokenPath = tmp.path('auth.json');
+		await symlink(target, tokenPath);
+
+		await assert.rejects(
+			() => loadToken({ tokenPath, env: {} }),
+			/not a regular file/,
+		);
+
+		// Symlink target must remain untouched (no auto-chmod through the link).
+		assert.equal((await stat(target)).mode & 0o777, 0o600);
 	});
 
 	it('SIMPLENOTE_TOKEN env var takes precedence over file', async () => {

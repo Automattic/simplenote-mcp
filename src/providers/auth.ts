@@ -1,4 +1,4 @@
-import { chmod, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { getTokenPath } from './paths.js';
 
@@ -151,6 +151,33 @@ export async function loadToken(opts: LoadTokenOptions = {}): Promise<AuthToken 
 	}
 
 	const path = opts.tokenPath ?? getTokenPath();
+
+	// On POSIX, harden against tokens copied or restored with loose perms,
+	// and reject symlinks so a pre-planted link can't redirect the read or
+	// have its target silently chmod'd. Windows lacks a meaningful POSIX
+	// mode bit, so this whole block is a no-op there.
+	if (process.platform !== 'win32') {
+		let stats;
+		try {
+			stats = await lstat(path);
+		} catch (err) {
+			if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+			throw err;
+		}
+		if (!stats.isFile()) {
+			throw new Error(
+				`Token file at ${path} is not a regular file (symlink or special file). Refusing to read for safety.`,
+			);
+		}
+		const mode = stats.mode & 0o777;
+		if (mode !== 0o600) {
+			await chmod(path, 0o600);
+			console.error(
+				`[simplenote-mcp] Tightened ${path} permissions from ${mode.toString(8)} to 0600.`,
+			);
+		}
+	}
+
 	let raw: string;
 	try {
 		raw = await readFile(path, 'utf-8');
