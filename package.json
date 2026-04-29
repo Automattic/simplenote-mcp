@@ -10,6 +10,9 @@
   "files": [
     "dist"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "mcpName": "io.github.automattic/simplenote-mcp",
   "scripts": {
     "start": "node dist/server.js",
