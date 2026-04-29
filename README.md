@@ -212,6 +212,13 @@ Then pass `--path`:
 
 `--path` always forces the native provider, even if a token is configured.
 
+### Other flags
+
+- `-h`, `--help` — print usage and exit.
+- `-V`, `--version` — print version and exit.
+
+Unknown flags and unexpected positional arguments are rejected. This prevents silent typos like `--paht` from being ignored and falling back to whatever provider is configured in `config.json`.
+
 ## Telemetry
 
 Simplenote MCP sends anonymous usage events to Automattic. A random UUID is stored in `telemetry.json` under the same config directory as `config.json` and is sent as `_ui` with `_ut=simplenote:local_uuid`.
