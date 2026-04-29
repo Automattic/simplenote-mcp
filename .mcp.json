@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "simplenote-dev": {
+      "command": "node",
+      "args": ["--import", "tsx", "src/server.ts"]
+    }
+  }
+}

@@ -484,6 +484,18 @@ npx @modelcontextprotocol/inspector npx -y @automattic/simplenote-mcp
 
 Inspector spawns the server as a subprocess over stdio, so anything that works in a real MCP client config works here — including `--path`, env vars, and alternate Node binaries.
 
+### Testing locally with Claude Code
+
+The repo includes a project-scoped `.mcp.json` that registers the local source as a server named `simplenote-dev`. When you open Claude Code in the repo directory, it offers to enable that server (you'll be prompted for permission the first time, since the file is committed). Once enabled, your Claude Code session in this directory talks to your in-progress code via `node --import tsx src/server.ts` — no build step needed.
+
+Workflow:
+
+1. Run `simplenote-mcp setup` once if you haven't already; the dev server reads the same `config.json`/`auth.json` as a normal install.
+2. Open Claude Code in the repo dir and approve `simplenote-dev` when prompted.
+3. Edit `src/`, save, then in Claude Code run `/mcp` and reconnect `simplenote-dev` to pick up the change.
+
+Project scope means the dev server only attaches in this directory — it doesn't pollute Claude Code sessions elsewhere on your machine.
+
 `server.js` at the repo root is a thin shim that imports `dist/server.js`, kept stable for users who wired up configs pointing at the local clone before the npm package existed.
 
 ## License
