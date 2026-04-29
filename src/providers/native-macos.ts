@@ -13,7 +13,7 @@ const CORE_DATA_EPOCH_OFFSET = 978_307_200;
 
 type CoreDataAttr = {
 	'@_name'?: string;
-	'#text'?: string;
+	'#text'?: string | number | boolean;
 };
 
 type CoreDataObject = {
@@ -55,7 +55,9 @@ class NativeMacosProvider implements Provider {
 
 		let db: { database?: { object?: CoreDataObject | CoreDataObject[] } };
 		try {
-			const parser = new XMLParser({ ignoreAttributes: false });
+			// parseTagValue: false keeps numeric-looking element text as strings so
+			// flag comparisons (e.g. pinned === '1') and date parsing work reliably.
+			const parser = new XMLParser({ ignoreAttributes: false, parseTagValue: false });
 			db = parser.parse(xml) as typeof db;
 		} catch (err) {
 			throw new Error(`Failed to parse Simplenote data: ${(err as Error).message}`);
@@ -89,7 +91,8 @@ function getAttr(obj: CoreDataObject, name: string): string | null {
 	if (!obj.attribute) return null;
 	const attrs = Array.isArray(obj.attribute) ? obj.attribute : [obj.attribute];
 	const attr = attrs.find((a) => a?.['@_name'] === name);
-	return attr?.['#text'] ?? null;
+	const text = attr?.['#text'];
+	return text == null ? null : String(text);
 }
 
 function normalizeNote(obj: CoreDataObject): NormalizedNote | null {
