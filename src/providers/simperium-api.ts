@@ -40,6 +40,7 @@ export type ApiErrorCode =
 	| 'not_found'
 	| 'note_in_trash'
 	| 'empty_content'
+	| 'suspicious_shrink'
 	| 'rate_limited'
 	| 'invalid_argument'
 	| 'version_not_found';
@@ -214,6 +215,26 @@ class SimperiumApiProvider implements Provider {
 				'note_in_trash',
 				'Note is in the trash and cannot be updated. Restore it in the Simplenote app to edit.',
 			);
+		}
+
+		if (input.content !== undefined) {
+			const existingContentStr =
+				typeof existing.content === 'string' ? existing.content : '';
+			const existingLength = existingContentStr.length;
+			const newLength = input.content.length;
+
+			if (existingLength > 500 && newLength < existingLength * 0.5) {
+				const percent = Math.round((newLength / existingLength) * 100);
+				throw new ApiError(
+					'suspicious_shrink',
+					`Refusing to shrink note from ${existingLength} to ${newLength} characters ` +
+						`(${percent}% of the original). This usually means the assistant did not see ` +
+						`the full note before writing — call get_note first and verify the entire ` +
+						`content is visible before retrying. If the user genuinely wants to replace ` +
+						`this note with much shorter content, use trash_note followed by ` +
+						`create_note instead of update_note.`,
+				);
+			}
 		}
 
 		const existingSystemTags = Array.isArray(existing.systemTags)
