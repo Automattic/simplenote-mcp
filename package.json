@@ -1,5 +1,5 @@
 {
-  "name": "simplenote-mcp",
+  "name": "@automattic/simplenote-mcp",
   "version": "1.0.0",
   "description": "MCP server for reading Simplenote notes across macOS, Linux, and Windows",
   "type": "module",
