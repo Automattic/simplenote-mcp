@@ -157,8 +157,11 @@ export type LoadTokenOptions = {
 // ELOOP rather than being silently followed, then operate on the resulting
 // handle (fstat / fchmod / readFile). Using one handle for the whole
 // check-and-use closes the TOCTOU window where a symlink could be swapped
-// in between an lstat and a path-based read. Windows lacks a meaningful
-// POSIX mode bit, so it falls back to a plain readFile.
+// in between an lstat and a path-based read. O_NONBLOCK keeps the open
+// from hanging on a FIFO that has no writer (POSIX says O_NONBLOCK has no
+// effect on reads from regular files, so the happy path is unchanged).
+// Windows lacks a meaningful POSIX mode bit, so it falls back to a plain
+// readFile.
 async function readTokenFileSecure(path: string): Promise<string | null> {
 	if (process.platform === 'win32') {
 		try {
@@ -171,7 +174,10 @@ async function readTokenFileSecure(path: string): Promise<string | null> {
 
 	let handle: FileHandle;
 	try {
-		handle = await open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+		handle = await open(
+			path,
+			fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK,
+		);
 	} catch (err) {
 		const code = (err as NodeJS.ErrnoException).code;
 		if (code === 'ENOENT') return null;

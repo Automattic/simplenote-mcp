@@ -1,6 +1,7 @@
 import { afterEach, describe, it, mock } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { chmod, stat, readFile, symlink, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import { platform } from 'node:os';
 import {
 	AuthError,
@@ -280,6 +281,23 @@ describe('token file roundtrip (tmpdir)', () => {
 
 		// Symlink target must remain untouched (no auto-chmod through the link).
 		assert.equal((await stat(target)).mode & 0o777, 0o600);
+	});
+
+	it('loadToken rejects a FIFO without hanging', async (t) => {
+		if (platform() === 'win32') {
+			t.skip('POSIX permission model');
+			return;
+		}
+		const tokenPath = tmp.path('auth.json');
+		// O_NONBLOCK in the open flags is what keeps this test from hanging:
+		// without it, opening a FIFO O_RDONLY would block until a writer
+		// opened the other end.
+		execFileSync('mkfifo', [tokenPath]);
+
+		await assert.rejects(
+			() => loadToken({ tokenPath, env: {} }),
+			/not a regular file/,
+		);
 	});
 
 	it('SIMPLENOTE_TOKEN env var takes precedence over file', async () => {
