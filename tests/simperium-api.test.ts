@@ -6,6 +6,7 @@ import {
 	emptyIndexResponse,
 	isNotePost,
 	isRawNoteGet,
+	notePostResponse,
 	rawNoteResponse,
 } from './helpers/simperium.ts';
 
@@ -372,7 +373,7 @@ describe('fetchNoteVersion', () => {
 describe('createNote', () => {
 	it('sends a POST to the Simperium API with correct payload', async () => {
 		const provider = createApiProvider();
-		const captured = captureFetch(() => new Response('1', { status: 200 }));
+		const captured = captureFetch(() => notePostResponse(1));
 
 		const result = await provider.createNote!({
 			content: 'Test note content',
@@ -409,7 +410,7 @@ describe('createNote', () => {
 
 	it('includes pinned in systemTags when pinned=true', async () => {
 		const provider = createApiProvider();
-		const captured = captureFetch(() => new Response('1', { status: 200 }));
+		const captured = captureFetch(() => notePostResponse(1));
 
 		await provider.createNote!({
 			content: 'Pinned note',
@@ -423,7 +424,7 @@ describe('createNote', () => {
 
 	it('excludes markdown from systemTags when markdown=false', async () => {
 		const provider = createApiProvider();
-		const captured = captureFetch(() => new Response('1', { status: 200 }));
+		const captured = captureFetch(() => notePostResponse(1));
 
 		await provider.createNote!({
 			content: 'Plain text note',
@@ -443,7 +444,7 @@ describe('createNote', () => {
 				fetchCount++;
 				return Response.json({ index: [], mark: undefined });
 			}
-			return new Response('1', { status: 200 });
+			return notePostResponse(1);
 		});
 
 		// Initial load
@@ -473,7 +474,7 @@ describe('updateNote', () => {
 				return rawNoteResponse({ content: 'Original content' });
 			}
 			if (isNotePost(opts?.method)) {
-				return new Response('2', { status: 200 });
+				return notePostResponse(2);
 			}
 			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
 		});
@@ -496,7 +497,7 @@ describe('updateNote', () => {
 				});
 			}
 			if (isNotePost(opts?.method)) {
-				return new Response('2', { status: 200 });
+				return notePostResponse(2);
 			}
 			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
 		});
@@ -525,7 +526,7 @@ describe('updateNote', () => {
 				});
 			}
 			if (isNotePost(opts?.method)) {
-				return new Response('2', { status: 200 });
+				return notePostResponse(2);
 			}
 			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
 		});
@@ -552,7 +553,7 @@ describe('updateNote', () => {
 				});
 			}
 			if (isNotePost(opts?.method)) {
-				return new Response('2', { status: 200 });
+				return notePostResponse(2);
 			}
 			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
 		});
@@ -571,7 +572,7 @@ describe('updateNote', () => {
 				return rawNoteResponse({ content: 'Original' });
 			}
 			if (isNotePost(opts?.method)) {
-				return new Response('2', { status: 200 });
+				return notePostResponse(2);
 			}
 			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
 		});
@@ -595,7 +596,7 @@ describe('updateNote', () => {
 				});
 			}
 			if (isNotePost(opts?.method)) {
-				return new Response('2', { status: 200 });
+				return notePostResponse(2);
 			}
 			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
 		});
@@ -619,7 +620,7 @@ describe('updateNote', () => {
 				});
 			}
 			if (isNotePost(opts?.method)) {
-				return new Response('2', { status: 200 });
+				return notePostResponse(2);
 			}
 			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
 		});
@@ -643,7 +644,7 @@ describe('updateNote', () => {
 				});
 			}
 			if (isNotePost(opts?.method)) {
-				return new Response('2', { status: 200 });
+				return notePostResponse(2);
 			}
 			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
 		});
@@ -683,7 +684,7 @@ describe('updateNote', () => {
 			}
 			if (isNotePost(opts?.method)) {
 				postCalled = true;
-				return new Response('2', { status: 200 });
+				return notePostResponse(2);
 			}
 			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
 		});
@@ -737,7 +738,7 @@ describe('updateNote', () => {
 			}
 			if (isNotePost(opts?.method)) {
 				postCalled = true;
-				return new Response('99', { status: 200 });
+				return notePostResponse(99);
 			}
 			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
 		});
@@ -762,7 +763,7 @@ describe('updateNote', () => {
 			}
 			if (isNotePost(opts?.method)) {
 				postCalled = true;
-				return new Response('99', { status: 200 });
+				return notePostResponse(99);
 			}
 			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
 		});
@@ -788,7 +789,7 @@ describe('updateNote', () => {
 			}
 			if (isNotePost(opts?.method)) {
 				postCalled = true;
-				return new Response('3', { status: 200 });
+				return notePostResponse(3);
 			}
 			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
 		});
@@ -811,7 +812,7 @@ describe('updateNote', () => {
 			}
 			if (isNotePost(opts?.method)) {
 				postCalled = true;
-				return new Response('99', { status: 200 });
+				return notePostResponse(99);
 			}
 			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
 		});
@@ -838,7 +839,7 @@ describe('updateNote', () => {
 			}
 			if (isNotePost(opts?.method)) {
 				postCalled = true;
-				return new Response('99', { status: 200 });
+				return notePostResponse(99);
 			}
 			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
 		});
@@ -862,7 +863,7 @@ describe('updateNote', () => {
 			}
 			if (isNotePost(opts?.method)) {
 				postCalled = true;
-				return new Response('5', { status: 200 });
+				return notePostResponse(5);
 			}
 			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
 		});
@@ -926,18 +927,76 @@ describe('updateNote', () => {
 		);
 	});
 
-	it('parses version from response body', async () => {
+	it('parses version from X-Simperium-Version response header', async () => {
 		const provider = createApiProvider();
 
 		mockFetch(async (url: string, opts?: RequestInit) => {
 			if (isRawNoteGet(url, opts?.method)) {
 				return rawNoteResponse({ content: 'Content' });
 			}
-			return new Response('42', { status: 200 });
+			return notePostResponse(42);
 		});
 
 		const result = await provider.updateNote!({ id: 'note-1', content: 'Updated' });
 		assert.equal(result.version, 42);
+	});
+
+	it('throws ApiError(invalid_response) when X-Simperium-Version header is missing on POST', async () => {
+		const provider = createApiProvider();
+
+		mockFetch(async (url: string, opts?: RequestInit) => {
+			if (isRawNoteGet(url, opts?.method)) {
+				return rawNoteResponse({ content: 'Content' });
+			}
+			// No X-Simperium-Version header.
+			return new Response('', { status: 200 });
+		});
+
+		await assert.rejects(
+			() => provider.updateNote!({ id: 'note-1', content: 'Updated' }),
+			(err: unknown) =>
+				err instanceof ApiError &&
+				err.code === 'invalid_response' &&
+				err.message.includes('X-Simperium-Version'),
+		);
+	});
+
+	it('throws ApiError(invalid_response) when X-Simperium-Version header is non-integer', async () => {
+		const provider = createApiProvider();
+
+		mockFetch(async (url: string, opts?: RequestInit) => {
+			if (isRawNoteGet(url, opts?.method)) {
+				return rawNoteResponse({ content: 'Content' });
+			}
+			return new Response('', {
+				status: 200,
+				headers: { 'X-Simperium-Version': 'not-a-number' },
+			});
+		});
+
+		await assert.rejects(
+			() => provider.updateNote!({ id: 'note-1', content: 'Updated' }),
+			(err: unknown) => err instanceof ApiError && err.code === 'invalid_response',
+		);
+	});
+
+	it('throws ApiError(invalid_response) when X-Simperium-Version header is < 1', async () => {
+		const provider = createApiProvider();
+
+		mockFetch(async (url: string, opts?: RequestInit) => {
+			if (isRawNoteGet(url, opts?.method)) {
+				return rawNoteResponse({ content: 'Content' });
+			}
+			return new Response('', {
+				status: 200,
+				headers: { 'X-Simperium-Version': '0' },
+			});
+		});
+
+		await assert.rejects(
+			() => provider.updateNote!({ id: 'note-1', content: 'Updated' }),
+			(err: unknown) => err instanceof ApiError && err.code === 'invalid_response',
+		);
 	});
 
 	it('clears cache after updating a note', async () => {
@@ -952,7 +1011,7 @@ describe('updateNote', () => {
 			if (isRawNoteGet(url, opts?.method)) {
 				return rawNoteResponse({ content: 'Content' });
 			}
-			return new Response('2', { status: 200 });
+			return notePostResponse(2);
 		});
 
 		// Initial load (two index fetches: note + tag)
@@ -981,7 +1040,7 @@ describe('updateNote', () => {
 			}
 			if (isNotePost(opts?.method)) {
 				postCalled = true;
-				return new Response('2', { status: 200 });
+				return notePostResponse(2);
 			}
 			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
 		});
@@ -1003,7 +1062,7 @@ describe('updateNote', () => {
 			}
 			if (isNotePost(opts?.method)) {
 				postCalled = true;
-				return new Response('2', { status: 200 });
+				return notePostResponse(2);
 			}
 			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
 		});
@@ -1022,7 +1081,7 @@ describe('updateNote', () => {
 			}
 			if (isNotePost(opts?.method)) {
 				postCalled = true;
-				return new Response('2', { status: 200 });
+				return notePostResponse(2);
 			}
 			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
 		});
@@ -1041,7 +1100,7 @@ describe('updateNote', () => {
 			}
 			if (isNotePost(opts?.method)) {
 				postCalled = true;
-				return new Response('2', { status: 200 });
+				return notePostResponse(2);
 			}
 			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
 		});
@@ -1061,7 +1120,7 @@ describe('updateNote', () => {
 			}
 			if (isNotePost(opts?.method)) {
 				postCalled = true;
-				return new Response('2', { status: 200 });
+				return notePostResponse(2);
 			}
 			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
 		});
@@ -1133,7 +1192,7 @@ describe('getNoteVersion', () => {
 				return rawNoteResponse({ content: 'orig' });
 			}
 			if (isNotePost(init?.method)) {
-				return new Response('2', { status: 200 });
+				return notePostResponse(2);
 			}
 			if (/\/v\/\d+$/.test(url)) {
 				return new Response(
@@ -1393,7 +1452,7 @@ describe('getNoteHistory', () => {
 				return rawNoteResponse({ content: 'orig' }, { version: 1 });
 			}
 			if (isNotePost(init?.method)) {
-				return new Response('2', { status: 200 });
+				return notePostResponse(2);
 			}
 			if (/\/v\/\d+$/.test(url)) {
 				return new Response(
@@ -1466,7 +1525,7 @@ function describeWriteToggle(spec: WriteToggleSpec): void {
 					});
 				}
 				if (isNotePost(opts?.method)) {
-					return new Response('2', { status: 200 });
+					return notePostResponse(2);
 				}
 				throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
 			});
@@ -1512,7 +1571,7 @@ function describeWriteToggle(spec: WriteToggleSpec): void {
 					});
 				}
 				if (isNotePost(opts?.method)) {
-					return new Response('2', { status: 200 });
+					return notePostResponse(2);
 				}
 				throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
 			});
@@ -1535,7 +1594,7 @@ function describeWriteToggle(spec: WriteToggleSpec): void {
 					return rawNoteResponse({ content: 'Sneaky', deleted: initialDeleted });
 				}
 				if (isNotePost(opts?.method)) {
-					return new Response('2', { status: 200 });
+					return notePostResponse(2);
 				}
 				throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
 			});
@@ -1560,7 +1619,7 @@ function describeWriteToggle(spec: WriteToggleSpec): void {
 				}
 				if (isNotePost(opts?.method)) {
 					postCount++;
-					return new Response('2', { status: 200 });
+					return notePostResponse(2);
 				}
 				throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
 			});
@@ -1582,7 +1641,7 @@ function describeWriteToggle(spec: WriteToggleSpec): void {
 				}
 				if (isNotePost(opts?.method)) {
 					postCount++;
-					return new Response('2', { status: 200 });
+					return notePostResponse(2);
 				}
 				throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
 			});
@@ -1670,7 +1729,7 @@ function describeWriteToggle(spec: WriteToggleSpec): void {
 					return rawNoteResponse({ content: 'Body', deleted: initialDeleted });
 				}
 				if (isNotePost(opts?.method)) {
-					return new Response('2', { status: 200 });
+					return notePostResponse(2);
 				}
 				throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
 			});
@@ -1749,7 +1808,7 @@ describe('write rate cap', () => {
 		mockFetch(async (url: string, opts?: RequestInit) => {
 			if (isNotePost(opts?.method)) {
 				postCount++;
-				return new Response('1', { status: 200 });
+				return notePostResponse(1);
 			}
 			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
 		});
@@ -1778,7 +1837,7 @@ describe('write rate cap', () => {
 		mockFetch(async (_url: string, opts?: RequestInit) => {
 			if (isNotePost(opts?.method)) {
 				postCount++;
-				return new Response('1', { status: 200 });
+				return notePostResponse(1);
 			}
 			throw new Error('unexpected fetch');
 		});
@@ -1805,7 +1864,7 @@ describe('write rate cap', () => {
 			}
 			if (isNotePost(opts?.method)) {
 				postCount++;
-				return new Response('2', { status: 200 });
+				return notePostResponse(2);
 			}
 			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
 		});
@@ -1838,7 +1897,7 @@ describe('write rate cap', () => {
 				attempts++;
 				// Fail the first 5 attempts with 500, succeed afterwards.
 				if (attempts <= 5) return new Response('', { status: 500 });
-				return new Response('1', { status: 200 });
+				return notePostResponse(1);
 			}
 			throw new Error('unexpected fetch');
 		});
@@ -1874,7 +1933,7 @@ describe('write rate cap', () => {
 			}
 			if (isNotePost(opts?.method)) {
 				postCount++;
-				return new Response('2', { status: 200 });
+				return notePostResponse(2);
 			}
 			throw new Error(`Unexpected fetch: ${opts?.method} ${url}`);
 		});
@@ -2002,7 +2061,7 @@ function describeRevertToggle(spec: RevertSpec): void {
 					);
 				}
 				if (isNotePost(init?.method)) {
-					return new Response('6', { status: 200 });
+					return notePostResponse(6);
 				}
 				throw new Error(`Unexpected fetch: ${init?.method} ${url}`);
 			});
@@ -2057,7 +2116,7 @@ function describeRevertToggle(spec: RevertSpec): void {
 				}
 				if (isNotePost(init?.method)) {
 					postCount++;
-					return new Response('6', { status: 200 });
+					return notePostResponse(6);
 				}
 				throw new Error(`Unexpected fetch: ${init?.method} ${url}`);
 			});
@@ -2112,7 +2171,7 @@ describe('revertNote (no-op and errors)', () => {
 			}
 			if (isNotePost(init?.method)) {
 				postCount++;
-				return new Response('6', { status: 200 });
+				return notePostResponse(6);
 			}
 			throw new Error(`Unexpected fetch: ${init?.method} ${url}`);
 		});
@@ -2148,7 +2207,7 @@ describe('revertNote (no-op and errors)', () => {
 				);
 			}
 			if (isNotePost(init?.method)) {
-				return new Response('2', { status: 200 });
+				return notePostResponse(2);
 			}
 			throw new Error(`Unexpected fetch: ${init?.method} ${url}`);
 		});
