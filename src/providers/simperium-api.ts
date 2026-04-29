@@ -689,12 +689,40 @@ async function fetchAllIndex(
 			);
 		}
 
-		const parsed = body as IndexResponse;
-		if (Array.isArray(parsed.index)) {
-			all.push(...parsed.index);
+		// Validate the protocol envelope before caching. A malformed body that
+		// silently parses as "no entries" would poison the 60-second cache with
+		// an empty store — surfacing as "all my notes are gone" until the TTL
+		// expires. Auth failures and invalid response shapes must surface.
+		if (!body || typeof body !== 'object' || Array.isArray(body)) {
+			throw new ApiError(
+				'invalid_response',
+				`Simperium ${bucket} index response was not a JSON object.`,
+			);
 		}
+		const parsed = body as IndexResponse;
+		if (!Array.isArray(parsed.index)) {
+			throw new ApiError(
+				'invalid_response',
+				`Simperium ${bucket} index missing or non-array "index" field.`,
+			);
+		}
+		if (parsed.mark !== undefined && typeof parsed.mark !== 'string') {
+			throw new ApiError(
+				'invalid_response',
+				`Simperium ${bucket} index has non-string "mark".`,
+			);
+		}
+		for (const entry of parsed.index) {
+			if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+				throw new ApiError(
+					'invalid_response',
+					`Simperium ${bucket} index contains non-object entry.`,
+				);
+			}
+		}
+		all.push(...parsed.index);
 
-		const nextMark = typeof parsed.mark === 'string' ? parsed.mark : undefined;
+		const nextMark = parsed.mark;
 		if (!nextMark || nextMark === mark) break;
 		mark = nextMark;
 	}
