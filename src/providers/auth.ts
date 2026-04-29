@@ -1,4 +1,14 @@
-import { chmod, lstat, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import {
+	chmod,
+	mkdir,
+	open,
+	readFile,
+	rename,
+	unlink,
+	writeFile,
+	type FileHandle,
+} from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
 import { dirname } from 'node:path';
 import { getTokenPath } from './paths.js';
 
@@ -143,6 +153,55 @@ export type LoadTokenOptions = {
 	env?: NodeJS.ProcessEnv;
 };
 
+// On POSIX, open the token with O_NOFOLLOW so a symlink at `path` raises
+// ELOOP rather than being silently followed, then operate on the resulting
+// handle (fstat / fchmod / readFile). Using one handle for the whole
+// check-and-use closes the TOCTOU window where a symlink could be swapped
+// in between an lstat and a path-based read. Windows lacks a meaningful
+// POSIX mode bit, so it falls back to a plain readFile.
+async function readTokenFileSecure(path: string): Promise<string | null> {
+	if (process.platform === 'win32') {
+		try {
+			return await readFile(path, 'utf-8');
+		} catch (err) {
+			if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+			throw err;
+		}
+	}
+
+	let handle: FileHandle;
+	try {
+		handle = await open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+	} catch (err) {
+		const code = (err as NodeJS.ErrnoException).code;
+		if (code === 'ENOENT') return null;
+		if (code === 'ELOOP') {
+			throw new Error(
+				`Token file at ${path} is not a regular file (symlink or special file). Refusing to read for safety.`,
+			);
+		}
+		throw err;
+	}
+	try {
+		const stats = await handle.stat();
+		if (!stats.isFile()) {
+			throw new Error(
+				`Token file at ${path} is not a regular file (symlink or special file). Refusing to read for safety.`,
+			);
+		}
+		const mode = stats.mode & 0o777;
+		if (mode !== 0o600) {
+			await handle.chmod(0o600);
+			console.error(
+				`[simplenote-mcp] Tightened ${path} permissions from ${mode.toString(8)} to 0600.`,
+			);
+		}
+		return await handle.readFile('utf-8');
+	} finally {
+		await handle.close();
+	}
+}
+
 export async function loadToken(opts: LoadTokenOptions = {}): Promise<AuthToken | null> {
 	const env = opts.env ?? process.env;
 	const envToken = env.SIMPLENOTE_TOKEN?.trim();
@@ -151,40 +210,8 @@ export async function loadToken(opts: LoadTokenOptions = {}): Promise<AuthToken 
 	}
 
 	const path = opts.tokenPath ?? getTokenPath();
-
-	// On POSIX, harden against tokens copied or restored with loose perms,
-	// and reject symlinks so a pre-planted link can't redirect the read or
-	// have its target silently chmod'd. Windows lacks a meaningful POSIX
-	// mode bit, so this whole block is a no-op there.
-	if (process.platform !== 'win32') {
-		let stats;
-		try {
-			stats = await lstat(path);
-		} catch (err) {
-			if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
-			throw err;
-		}
-		if (!stats.isFile()) {
-			throw new Error(
-				`Token file at ${path} is not a regular file (symlink or special file). Refusing to read for safety.`,
-			);
-		}
-		const mode = stats.mode & 0o777;
-		if (mode !== 0o600) {
-			await chmod(path, 0o600);
-			console.error(
-				`[simplenote-mcp] Tightened ${path} permissions from ${mode.toString(8)} to 0600.`,
-			);
-		}
-	}
-
-	let raw: string;
-	try {
-		raw = await readFile(path, 'utf-8');
-	} catch (err) {
-		if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
-		throw err;
-	}
+	const raw = await readTokenFileSecure(path);
+	if (raw === null) return null;
 
 	let parsed: unknown;
 	try {

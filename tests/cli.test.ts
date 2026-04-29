@@ -232,6 +232,7 @@ describe('setupCommand — already logged in', () => {
 		await writeFile(
 			tmp.path('auth.json'),
 			JSON.stringify({ username: 'mark@example.com', token: 'tok' }),
+			{ mode: 0o600 },
 		);
 	});
 

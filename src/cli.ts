@@ -87,7 +87,14 @@ async function setupCommand(opts: SetupOptions = {}): Promise<number> {
 			}
 		}
 
-		const existingToken = await loadToken({ tokenPath: opts.authPath });
+		let existingToken: Awaited<ReturnType<typeof loadToken>>;
+		try {
+			existingToken = await loadToken({ tokenPath: opts.authPath });
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			console.error(`Failed to load existing token: ${message}`);
+			return 1;
+		}
 
 		let username: string;
 		let auth: 'existing_token' | 'new_login';
