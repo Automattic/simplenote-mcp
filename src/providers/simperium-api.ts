@@ -107,38 +107,62 @@ class SimperiumApiProvider implements Provider {
 			);
 		}
 
-		try {
-			const [noteEntries, tagEntries] = await Promise.all([
-				fetchAllIndex('note', auth.token),
-				fetchAllIndex('tag', auth.token),
-			]);
+		// allSettled (not all) so one bucket's transient failure doesn't
+		// mask a non-transient error from the other. Promise.all rejects on
+		// the first failure: if note/index 503s a millisecond before
+		// tag/index returns a malformed body, the catch only sees the
+		// transient error and we'd incorrectly serve stale cache instead of
+		// surfacing the invalid_response.
+		const [noteResult, tagResult] = await Promise.allSettled([
+			fetchAllIndex('note', auth.token),
+			fetchAllIndex('tag', auth.token),
+		]);
 
-			const data: NormalizedStore = {
-				notes: noteEntries
-					.map(normalizeNote)
-					.filter((n): n is NormalizedNote => n !== null),
-				tags: tagEntries
-					.map(normalizeTag)
-					.filter((t): t is NormalizedTag => t !== null),
-			};
+		const errors: unknown[] = [];
+		if (noteResult.status === 'rejected') errors.push(noteResult.reason);
+		if (tagResult.status === 'rejected') errors.push(tagResult.reason);
 
-			this.cache = { fetchedAt: Date.now(), data };
-			return data;
-		} catch (err) {
-			// Only fall back to stale cache for transient failures. Auth
-			// rejection or shape errors must surface so the user notices.
-			if (
-				this.cache &&
-				err instanceof ApiError &&
-				(err.code === 'network_error' || err.code === 'request_failed')
-			) {
+		if (errors.length > 0) {
+			// Surface any non-transient error before considering the stale
+			// cache. Auth rejection and invalid response shapes must reach
+			// the user even when paired with a transient failure.
+			const nonTransient = errors.find(
+				(e) =>
+					!(
+						e instanceof ApiError &&
+						(e.code === 'network_error' || e.code === 'request_failed')
+					),
+			);
+			if (nonTransient) throw nonTransient;
+
+			if (this.cache) {
+				const first = errors[0];
+				const message =
+					first instanceof Error ? first.message : String(first);
 				console.error(
-					`[simplenote-mcp] Simperium API error, returning cached data: ${err.message}`,
+					`[simplenote-mcp] Simperium API error, returning cached data: ${message}`,
 				);
 				return this.cache.data;
 			}
-			throw err;
+			throw errors[0];
 		}
+
+		const noteEntries = (noteResult as PromiseFulfilledResult<IndexEntry[]>)
+			.value;
+		const tagEntries = (tagResult as PromiseFulfilledResult<IndexEntry[]>)
+			.value;
+
+		const data: NormalizedStore = {
+			notes: noteEntries
+				.map(normalizeNote)
+				.filter((n): n is NormalizedNote => n !== null),
+			tags: tagEntries
+				.map(normalizeTag)
+				.filter((t): t is NormalizedTag => t !== null),
+		};
+
+		this.cache = { fetchedAt: Date.now(), data };
+		return data;
 	}
 
 	clearCache(): void {

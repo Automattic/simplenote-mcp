@@ -2037,6 +2037,37 @@ describe('loadStore index shape validation', () => {
 			mock.timers.reset();
 		}
 	});
+
+	it('surfaces invalid_response from one bucket even when the other returns a transient error', async () => {
+		mock.timers.enable({ apis: ['Date'] });
+		try {
+			const provider = createApiProvider();
+
+			// Warm the cache so the stale-fallback path is otherwise live.
+			mockFetch(async () => emptyIndexResponse());
+			await provider.loadStore();
+
+			mock.timers.tick(61_000);
+			// note/index 503 → request_failed (transient)
+			// tag/index  {}  → invalid_response (must surface)
+			mockFetch(async (url: string) => {
+				if (url.includes('/note/index')) {
+					return new Response('', { status: 503 });
+				}
+				if (url.includes('/tag/index')) {
+					return jsonResponse({});
+				}
+				throw new Error(`unexpected fetch: ${url}`);
+			});
+			await assert.rejects(
+				() => provider.loadStore(),
+				(err: unknown) =>
+					err instanceof ApiError && err.code === 'invalid_response',
+			);
+		} finally {
+			mock.timers.reset();
+		}
+	});
 });
 
 type RevertSpec = {
