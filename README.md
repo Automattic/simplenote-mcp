@@ -490,11 +490,13 @@ The repo includes a project-scoped `.mcp.json` that registers the local source a
 
 Workflow:
 
-1. Run `simplenote-mcp setup` once if you haven't already; the dev server reads the same `config.json`/`auth.json` as a normal install.
+1. Run `npm install` so `tsx` is available, and `simplenote-mcp setup` once if you haven't already; the dev server reads the same `config.json`/`auth.json` as a normal install.
 2. Open Claude Code in the repo dir and approve `simplenote-dev` when prompted.
 3. Edit `src/`, save, then in Claude Code run `/mcp` and reconnect `simplenote-dev` to pick up the change.
 
 Project scope means the dev server only attaches in this directory — it doesn't pollute Claude Code sessions elsewhere on your machine.
+
+> **Heads-up:** if your `config.json` has `writeMode: true`, the dev server mutates your real Simplenote notes — there's no isolation between dev and prod data. Either run setup with write mode disabled while iterating, or test against a throwaway Simplenote account.
 
 `server.js` at the repo root is a thin shim that imports `dist/server.js`, kept stable for users who wired up configs pointing at the local clone before the npm package existed.
 
