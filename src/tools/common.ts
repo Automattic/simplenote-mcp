@@ -21,10 +21,19 @@ export const READ_ONLY_ANNOTATIONS = {
 	openWorldHint: true,
 } as const;
 
-// Write operations modify remote state.
-export const WRITE_ANNOTATIONS = {
+// Pure creates: no existing state to clobber.
+export const CREATE_ANNOTATIONS = {
 	readOnlyHint: false,
 	destructiveHint: false,
+	idempotentHint: false,
+	openWorldHint: true,
+} as const;
+
+// Full-content replacement: destructive in the MCP sense even though
+// Simplenote preserves history. Clients use this for confirmation UX.
+export const UPDATE_ANNOTATIONS = {
+	readOnlyHint: false,
+	destructiveHint: true,
 	idempotentHint: false,
 	openWorldHint: true,
 } as const;
