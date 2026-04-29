@@ -53,3 +53,13 @@ export function isRawNoteGet(url: string, method?: string): boolean {
 export function isNotePost(method?: string): boolean {
 	return method === 'POST';
 }
+
+// Single-note POST response (Simperium /1/{app}/note/i/{id}?ccid=...). The new
+// version is returned in the X-Simperium-Version header per the Simperium HTTP
+// contract; the body is empty.
+export function notePostResponse(version: number): Response {
+	return new Response('', {
+		status: 200,
+		headers: { 'X-Simperium-Version': String(version) },
+	});
+}

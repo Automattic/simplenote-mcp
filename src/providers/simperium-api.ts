@@ -633,10 +633,11 @@ async function postNote(
 	token: string,
 	operation: 'create' | 'update' = 'create',
 ): Promise<NoteCreateResult> {
-	// Simperium returns the new version number as plain text in the body.
-	// Encode the id so a value like `../tag/i/x` can't be normalized away by
-	// the URL parser and redirected to a different bucket. ccid is a per-call
-	// idempotency token: a retry after a network blip won't duplicate the note.
+	// Simperium returns the new version number in the X-Simperium-Version
+	// response header. Encode the id so a value like `../tag/i/x` can't be
+	// normalized away by the URL parser and redirected to a different bucket.
+	// ccid is a per-call idempotency token: a retry after a network blip won't
+	// duplicate the note.
 	const ccid = randomUUID();
 	const res = await simperiumRequest({
 		method: 'POST',
@@ -646,15 +647,15 @@ async function postNote(
 		context: operation === 'update' ? 'updating note' : 'creating note',
 	});
 
-	let version = 1;
-	try {
-		const text = await res.text();
-		const parsed = Number.parseInt(text, 10);
-		if (Number.isFinite(parsed)) version = parsed;
-	} catch {
-		// fall through with default version 1
+	const versionHeader = res.headers.get('X-Simperium-Version');
+	const parsed = versionHeader ? Number.parseInt(versionHeader, 10) : NaN;
+	if (!Number.isInteger(parsed) || parsed < 1) {
+		throw new ApiError(
+			'invalid_response',
+			'Simperium did not return a usable X-Simperium-Version header on POST.',
+		);
 	}
-	return { id: noteId, version };
+	return { id: noteId, version: parsed };
 }
 
 export function createApiProvider(): Provider {
