@@ -2022,6 +2022,113 @@ describe('loadStore stale-cache fallback', () => {
 	});
 });
 
+// ---------- index response shape validation ----------
+
+describe('loadStore index shape validation', () => {
+	function jsonResponse(body: unknown): Response {
+		return new Response(JSON.stringify(body), {
+			status: 200,
+			headers: { 'content-type': 'application/json' },
+		});
+	}
+
+	it('rejects an empty object body', async () => {
+		const provider = createApiProvider();
+		mockFetch(async () => jsonResponse({}));
+		await assert.rejects(
+			() => provider.loadStore(),
+			(err: unknown) => err instanceof ApiError && err.code === 'invalid_response',
+		);
+	});
+
+	it('rejects when "index" is not an array', async () => {
+		const provider = createApiProvider();
+		mockFetch(async () => jsonResponse({ index: 'bad' }));
+		await assert.rejects(
+			() => provider.loadStore(),
+			(err: unknown) => err instanceof ApiError && err.code === 'invalid_response',
+		);
+	});
+
+	it('rejects when "mark" is non-string', async () => {
+		const provider = createApiProvider();
+		mockFetch(async () => jsonResponse({ index: [], mark: 123 }));
+		await assert.rejects(
+			() => provider.loadStore(),
+			(err: unknown) => err instanceof ApiError && err.code === 'invalid_response',
+		);
+	});
+
+	it('rejects when the body is a JSON array at the root', async () => {
+		const provider = createApiProvider();
+		mockFetch(async () => jsonResponse([{ id: 'x' }]));
+		await assert.rejects(
+			() => provider.loadStore(),
+			(err: unknown) => err instanceof ApiError && err.code === 'invalid_response',
+		);
+	});
+
+	it('rejects when an entry is not an object', async () => {
+		const provider = createApiProvider();
+		mockFetch(async () => jsonResponse({ index: ['not-an-object'] }));
+		await assert.rejects(
+			() => provider.loadStore(),
+			(err: unknown) => err instanceof ApiError && err.code === 'invalid_response',
+		);
+	});
+
+	it('rethrows invalid_response after a successful read instead of caching the empty result', async () => {
+		mock.timers.enable({ apis: ['Date'] });
+		try {
+			const provider = createApiProvider();
+
+			mockFetch(async () => emptyIndexResponse());
+			await provider.loadStore();
+
+			mock.timers.tick(61_000);
+			mockFetch(async () => jsonResponse({}));
+			await assert.rejects(
+				() => provider.loadStore(),
+				(err: unknown) =>
+					err instanceof ApiError && err.code === 'invalid_response',
+			);
+		} finally {
+			mock.timers.reset();
+		}
+	});
+
+	it('surfaces invalid_response from one bucket even when the other returns a transient error', async () => {
+		mock.timers.enable({ apis: ['Date'] });
+		try {
+			const provider = createApiProvider();
+
+			// Warm the cache so the stale-fallback path is otherwise live.
+			mockFetch(async () => emptyIndexResponse());
+			await provider.loadStore();
+
+			mock.timers.tick(61_000);
+			// note/index 503 → request_failed (transient)
+			// tag/index  {}  → invalid_response (must surface)
+			mockFetch(async (url: string) => {
+				if (url.includes('/note/index')) {
+					return new Response('', { status: 503 });
+				}
+				if (url.includes('/tag/index')) {
+					return jsonResponse({});
+				}
+				throw new Error(`unexpected fetch: ${url}`);
+			});
+			await assert.rejects(
+				() => provider.loadStore(),
+				(err: unknown) =>
+					err instanceof ApiError && err.code === 'invalid_response',
+			);
+		} finally {
+			mock.timers.reset();
+		}
+	});
+});
+
 type RevertSpec = {
 	label: string;
 	startDeleted: boolean;
