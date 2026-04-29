@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { readFile, stat, writeFile } from 'node:fs/promises';
+import { readFile, stat, symlink, writeFile } from 'node:fs/promises';
+import { platform } from 'node:os';
 import type { Interface } from 'node:readline/promises';
 import { AuthError } from '../src/providers/auth.ts';
 import { _test } from '../src/cli.ts';
@@ -232,6 +233,7 @@ describe('setupCommand — already logged in', () => {
 		await writeFile(
 			tmp.path('auth.json'),
 			JSON.stringify({ username: 'mark@example.com', token: 'tok' }),
+			{ mode: 0o600 },
 		);
 	});
 
@@ -464,6 +466,7 @@ describe('setupCommand — local DB detected', () => {
 		await writeFile(
 			tmp.path('auth.json'),
 			JSON.stringify({ username: 'mark@example.com', token: 'tok' }),
+			{ mode: 0o600 },
 		);
 		const { exitCode } = await runSetup({
 			tmp,
@@ -473,6 +476,42 @@ describe('setupCommand — local DB detected', () => {
 		assert.equal(exitCode, 0);
 		const config = JSON.parse(await readFile(tmp.path('config.json'), 'utf-8'));
 		assert.deepEqual(config, { source: 'api', writeMode: true });
+	});
+});
+
+// ---------- setupCommand — token file safety ----------
+
+describe('setupCommand — token file safety', () => {
+	const tmp = useTmpDir('smn-setup-safety-');
+	useEnvVar('SIMPLENOTE_TOKEN');
+	afterEach(() => {
+		mock.restoreAll();
+	});
+
+	it('exits 1 with a friendly error when auth.json is a symlink', async (t) => {
+		if (platform() === 'win32') {
+			t.skip('POSIX permission model');
+			return;
+		}
+		const target = tmp.path('elsewhere.json');
+		await writeFile(
+			target,
+			JSON.stringify({ username: 'a@b.com', token: 'tok' }),
+			{ mode: 0o600 },
+		);
+		await symlink(target, tmp.path('auth.json'));
+
+		const { exitCode, stderr } = await runSetup({
+			tmp,
+			profile: NO_LOCAL,
+			responses: [],
+		});
+
+		assert.equal(exitCode, 1);
+		assert.ok(
+			stderr.some((l) => /Failed to load existing token/.test(l)),
+			'expected stderr to contain CLI-friendly error',
+		);
 	});
 });
 
