@@ -14,11 +14,12 @@ import {
 	jsonResult,
 } from './results.js';
 import {
+	CREATE_ANNOTATIONS,
 	READ_ONLY_ANNOTATIONS,
 	RESTORE_ANNOTATIONS,
 	REVERT_ANNOTATIONS,
 	TRASH_ANNOTATIONS,
-	WRITE_ANNOTATIONS,
+	UPDATE_ANNOTATIONS,
 	toolError,
 	type ToolRegistrationContext,
 } from './common.js';
@@ -55,7 +56,7 @@ export function registerWriteTools({
 						.describe('Pin note to top of list (default: false)'),
 				},
 				outputSchema: CreateNoteToolOutputSchema,
-				annotations: WRITE_ANNOTATIONS,
+				annotations: CREATE_ANNOTATIONS,
 			},
 			trackedTool('create_note', async ({ content, tags, markdown, pinned }) => {
 				try {
@@ -99,7 +100,7 @@ export function registerWriteTools({
 					pinned: z.boolean().optional().describe('Pin/unpin note'),
 				},
 				outputSchema: UpdateNoteToolOutputSchema,
-				annotations: WRITE_ANNOTATIONS,
+				annotations: UPDATE_ANNOTATIONS,
 			},
 			trackedTool('update_note', async ({ id, content, tags, markdown, pinned }) => {
 				if (
