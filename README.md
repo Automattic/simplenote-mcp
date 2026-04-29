@@ -11,7 +11,7 @@ Works with Claude Desktop, Claude Code, Cursor, VS Code (Copilot), Zed, Cline, W
 Run setup once:
 
 ```bash
-npx -y simplenote-mcp setup
+npx -y @automattic/simplenote-mcp setup
 ```
 
 On macOS with the [Simplenote desktop app](https://simplenote.com/) installed and synced, setup detects the local database and asks whether to use it. Accepting that option is fully offline and read-only. On Linux, Windows, or macOS without the desktop app, setup prompts for your Simplenote email, sends an auth code, then asks for the code and whether to enable write mode.
@@ -25,7 +25,7 @@ Then point your MCP client at the server.
   "mcpServers": {
     "simplenote": {
       "command": "npx",
-      "args": ["-y", "simplenote-mcp"]
+      "args": ["-y", "@automattic/simplenote-mcp"]
     }
   }
 }
@@ -42,12 +42,12 @@ Restart the client and ask it to list your tags.
 
 ## Install
 
-Most users don't need to install anything manually — `npx -y simplenote-mcp` in the MCP config does it on first use.
+Most users don't need to install anything manually — `npx -y @automattic/simplenote-mcp` in the MCP config does it on first use.
 
 If you prefer a global install (faster startup, no cold-cache download on first use):
 
 ```bash
-npm install -g simplenote-mcp
+npm install -g @automattic/simplenote-mcp
 ```
 
 Then reference `simplenote-mcp` directly as the `command` in your MCP config.
@@ -59,7 +59,7 @@ Run setup once to create `config.json`. Native macOS setup does not require Simp
 ### One-time setup
 
 ```bash
-npx -y simplenote-mcp setup
+npx -y @automattic/simplenote-mcp setup
 ```
 
 If a local macOS Simplenote database is detected, setup offers to use it and writes `config.json` with `source: "local"`.
@@ -77,7 +77,7 @@ Otherwise, setup checks for an existing token in `auth.json`. If one is already 
 To remove the stored token:
 
 ```bash
-npx -y simplenote-mcp logout
+npx -y @automattic/simplenote-mcp logout
 ```
 
 ### Headless / CI
@@ -85,7 +85,7 @@ npx -y simplenote-mcp logout
 Skip `auth.json` by exporting the token directly:
 
 ```bash
-SIMPLENOTE_TOKEN=<token> npx -y simplenote-mcp
+SIMPLENOTE_TOKEN=<token> npx -y @automattic/simplenote-mcp
 ```
 
 The env var bypasses `auth.json`.
@@ -118,13 +118,13 @@ All MCP clients converge on the same `{ command, args, env }` shape. The only th
   "mcpServers": {
     "simplenote": {
       "command": "npx",
-      "args": ["-y", "simplenote-mcp"]
+      "args": ["-y", "@automattic/simplenote-mcp"]
     }
   }
 }
 ```
 
-Run `npx -y simplenote-mcp setup` once in a terminal before starting the client.
+Run `npx -y @automattic/simplenote-mcp setup` once in a terminal before starting the client.
 
 Restart Claude Desktop to pick up config changes. See [Windows notes](#windows-notes) below for Windows-specific quirks.
 
@@ -133,7 +133,7 @@ Restart Claude Desktop to pick up config changes. See [Windows notes](#windows-n
 The easy path is the CLI:
 
 ```bash
-claude mcp add simplenote -- npx -y simplenote-mcp
+claude mcp add simplenote -- npx -y @automattic/simplenote-mcp
 ```
 
 Or edit `~/.claude.json` / project `.mcp.json` with the same JSON shape as Claude Desktop above.
@@ -151,7 +151,7 @@ User config via **Command Palette → "MCP: Open User Configuration"**, or per-p
   "servers": {
     "simplenote": {
       "command": "npx",
-      "args": ["-y", "simplenote-mcp"]
+      "args": ["-y", "@automattic/simplenote-mcp"]
     }
   }
 }
@@ -167,7 +167,7 @@ In Zed's `settings.json`:
     "simplenote": {
       "command": {
         "path": "npx",
-        "args": ["-y", "simplenote-mcp"]
+        "args": ["-y", "@automattic/simplenote-mcp"]
       }
     }
   }
@@ -201,7 +201,7 @@ Then pass `--path`:
       "command": "npx",
       "args": [
         "-y",
-        "simplenote-mcp",
+        "@automattic/simplenote-mcp",
         "--path",
         "/path/to/Simplenote.storedata"
       ]
@@ -221,13 +221,13 @@ Tracked events are limited to setup choices (`type`, OS family, write mode, and 
 To opt out for one run, set:
 
 ```bash
-SIMPLENOTE_MCP_DISABLE_TELEMETRY=1 npx -y simplenote-mcp
+SIMPLENOTE_MCP_DISABLE_TELEMETRY=1 npx -y @automattic/simplenote-mcp
 ```
 
 To persistently opt out:
 
 ```bash
-npx simplenote-mcp disable-telemetry
+npx @automattic/simplenote-mcp disable-telemetry
 ```
 
 When running from a local checkout after building, `node server.js disable-telemetry` works too.
@@ -394,7 +394,7 @@ A few Windows-specific quirks worth knowing:
     "mcpServers": {
       "simplenote": {
         "command": "cmd",
-        "args": ["/c", "npx", "-y", "simplenote-mcp"]
+        "args": ["/c", "npx", "-y", "@automattic/simplenote-mcp"]
       }
     }
   }
@@ -413,19 +413,19 @@ A few Windows-specific quirks worth knowing:
 ## Troubleshooting
 
 **"No configuration found. Run `simplenote-mcp setup`..."**
-Run `npx -y simplenote-mcp setup` once before starting your MCP client.
+Run `npx -y @automattic/simplenote-mcp setup` once before starting your MCP client.
 
 **"Not logged in. Run `simplenote-mcp setup`..."**
-You're on the Simperium API path without a token. Run `npx -y simplenote-mcp setup` in a terminal.
+You're on the Simperium API path without a token. Run `npx -y @automattic/simplenote-mcp setup` in a terminal.
 
 **"Token rejected."**
-The token may have been invalidated server-side. Run `npx -y simplenote-mcp logout`, then `npx -y simplenote-mcp setup`.
+The token may have been invalidated server-side. Run `npx -y @automattic/simplenote-mcp logout`, then `npx -y @automattic/simplenote-mcp setup`.
 
 **Tools list empty / "Simplenote store not found"**
 On macOS the default path is `~/Library/Group Containers/PZYM8XX95Q.com.automattic.SimplenoteMac/Data/Simplenote.storedata`. If your store lives elsewhere, pass `--path`. If you don't have the desktop app, switch to the API path with `simplenote-mcp setup`.
 
 **First tool call is very slow**
-`npx -y` downloads the package on first use. On slow networks this can exceed the MCP client's startup timeout (~10s). Either wait for it to warm up, or install globally once: `npm install -g simplenote-mcp` and change `"command": "npx"` to `"command": "simplenote-mcp"` (drop the args).
+`npx -y` downloads the package on first use. On slow networks this can exceed the MCP client's startup timeout (~10s). Either wait for it to warm up, or install globally once: `npm install -g @automattic/simplenote-mcp` and change `"command": "npx"` to `"command": "simplenote-mcp"` (drop the args).
 
 **"command not found: npx" / "spawn npx ENOENT" on Windows**
 See the `cmd /c` wrapping in [Windows notes](#windows-notes).
@@ -471,7 +471,7 @@ npx @modelcontextprotocol/inspector npx tsx src/server.ts
 **Test the published npm package** (exactly what users get):
 
 ```bash
-npx @modelcontextprotocol/inspector npx -y simplenote-mcp
+npx @modelcontextprotocol/inspector npx -y @automattic/simplenote-mcp
 ```
 
 **Pick a provider explicitly:**
