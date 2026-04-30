@@ -16,20 +16,21 @@ npx -y @automattic/simplenote-mcp setup
 
 On macOS with the [Simplenote desktop app](https://simplenote.com/) installed and synced, setup detects the local database and asks whether to use it. Accepting that option is fully offline and read-only. On Linux, Windows, or macOS without the desktop app, setup prompts for your Simplenote email, sends an auth code, then asks for the code and whether to enable write mode.
 
-Then point your MCP client at the server.
+Then register the server with your MCP client.
 
-**Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+**Claude Code:**
 
-```json
-{
-  "mcpServers": {
-    "simplenote": {
-      "command": "npx",
-      "args": ["-y", "@automattic/simplenote-mcp"]
-    }
-  }
-}
+```bash
+claude mcp add simplenote -- npx -y @automattic/simplenote-mcp
 ```
+
+**Codex:**
+
+```bash
+codex mcp add simplenote -- npx -y @automattic/simplenote-mcp
+```
+
+For Claude Desktop, Cursor, VS Code, Zed, Cline, and Windsurf, see [Configuration](#configuration) below — these clients are configured by editing a JSON file rather than a CLI command.
 
 Restart the client and ask it to list your tags.
 
@@ -107,7 +108,27 @@ Magic-link tokens appear sticky per user (requesting a new code often returns th
 
 ## Configuration
 
-All MCP clients converge on the same `{ command, args, env }` shape. The only things that differ between them are the config file location and the top-level key (`mcpServers` vs. `servers` vs. `context_servers`).
+Clients with a CLI (Claude Code, Codex) can register the server with one command — see below. Everything else is JSON: all MCP clients converge on the same `{ command, args, env }` shape, and only the config file location and the top-level key (`mcpServers` vs. `servers` vs. `context_servers`) differ between them.
+
+### Claude Code
+
+Recommended:
+
+```bash
+claude mcp add simplenote -- npx -y @automattic/simplenote-mcp
+```
+
+Or edit `~/.claude.json` / project `.mcp.json` with the same JSON shape as Claude Desktop below.
+
+### Codex
+
+Recommended:
+
+```bash
+codex mcp add simplenote -- npx -y @automattic/simplenote-mcp
+```
+
+Or edit `~/.codex/config.toml` directly.
 
 ### Claude Desktop
 
@@ -127,16 +148,6 @@ All MCP clients converge on the same `{ command, args, env }` shape. The only th
 Run `npx -y @automattic/simplenote-mcp setup` once in a terminal before starting the client.
 
 Restart Claude Desktop to pick up config changes. See [Windows notes](#windows-notes) below for Windows-specific quirks.
-
-### Claude Code
-
-The easy path is the CLI:
-
-```bash
-claude mcp add simplenote -- npx -y @automattic/simplenote-mcp
-```
-
-Or edit `~/.claude.json` / project `.mcp.json` with the same JSON shape as Claude Desktop above.
 
 ### Cursor
 
