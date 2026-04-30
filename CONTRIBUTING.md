@@ -20,7 +20,7 @@ npm run build
 
 ## Pull Requests
 
-Open pull requests against the `v2` branch unless a maintainer asks otherwise.
+Open pull requests against the `main` branch unless a maintainer asks otherwise.
 
 Keep changes focused and include tests when behavior changes. For user-facing behavior, update `README.md` or related docs in the same PR.
 
