@@ -128,7 +128,13 @@ Recommended:
 codex mcp add simplenote -- npx -y @automattic/simplenote-mcp
 ```
 
-Or edit `~/.codex/config.toml` directly.
+Or edit `~/.codex/config.toml` directly:
+
+```toml
+[mcp_servers.simplenote]
+command = "npx"
+args = ["-y", "@automattic/simplenote-mcp"]
+```
 
 ### Claude Desktop
 
