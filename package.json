@@ -1,6 +1,6 @@
 {
   "name": "@automattic/simplenote-mcp",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "MCP server for reading Simplenote notes across macOS, Linux, and Windows",
   "type": "module",
   "main": "dist/server.js",
@@ -13,7 +13,7 @@
   "publishConfig": {
     "access": "public"
   },
-  "mcpName": "io.github.automattic/simplenote-mcp",
+  "mcpName": "io.github.Automattic/simplenote-mcp",
   "scripts": {
     "start": "node dist/server.js",
     "build": "tsc && shx chmod +x dist/server.js",
