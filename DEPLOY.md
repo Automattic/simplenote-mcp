@@ -5,7 +5,7 @@ This document covers releasing a new version of `@automattic/simplenote-mcp` to 
 ## Prerequisites
 
 - npm CLI logged in as a user with publish access to the `@automattic` scope. Confirm with `npm whoami`, then check that the user appears in `npm view @automattic/simplenote-mcp maintainers`. If not, an existing maintainer must run `npm owner add <user> @automattic/simplenote-mcp`.
-- The [`mcp-publisher`](https://github.com/modelcontextprotocol/registry) CLI installed (for example, `brew install mcp-publisher`) and authenticated with `mcp-publisher login github`.
+- The [`mcp-publisher`](https://github.com/modelcontextprotocol/registry) CLI installed and authenticated with `mcp-publisher login github`. See the [registry's publishing quickstart](https://modelcontextprotocol.io/registry/quickstart) for the current install options (Homebrew and pre-built binaries).
 - The GitHub user authenticated to `mcp-publisher` must be a member of the GitHub organization that owns the registry namespace, with **public** organization-membership visibility. The MCP Registry uses GitHub's canonical casing when granting namespace permissions, so `io.github.Automattic/...` (capital `A`) is the form the registry expects for this repo.
 
 ## Pre-release checklist
@@ -56,10 +56,10 @@ The registry only stores metadata; the actual artifact lives on npm. The publish
 
 ```bash
 npm view @automattic/simplenote-mcp version
-curl "https://registry.modelcontextprotocol.io/v0/servers?search=io.github.Automattic/simplenote-mcp"
+curl -s "https://registry.modelcontextprotocol.io/v0/servers?search=io.github.Automattic/simplenote-mcp" | jq '.servers[].version'
 ```
 
-Both should report the new version.
+Both should report the new version. If `jq` is unavailable, `grep -o '"version":"[^"]*"' ` against the same `curl` works as a fallback.
 
 ## Troubleshooting
 
