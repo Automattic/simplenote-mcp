@@ -1,0 +1,20 @@
+{
+	"$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+	"name": "io.github.automattic/simplenote-mcp",
+	"description": "MCP server for reading Simplenote notes across macOS, Linux, and Windows",
+	"repository": {
+		"url": "https://github.com/Automattic/simplenote-mcp",
+		"source": "github"
+	},
+	"version": "2.0.0",
+	"packages": [
+		{
+			"registryType": "npm",
+			"identifier": "@automattic/simplenote-mcp",
+			"version": "2.0.0",
+			"transport": {
+				"type": "stdio"
+			}
+		}
+	]
+}
