@@ -59,7 +59,7 @@ npm view @automattic/simplenote-mcp version
 curl -s "https://registry.modelcontextprotocol.io/v0/servers?search=io.github.Automattic/simplenote-mcp" | jq '.servers[].version'
 ```
 
-Both should report the new version. If `jq` is unavailable, `grep -o '"version":"[^"]*"' ` against the same `curl` works as a fallback.
+Both should report the new version. If `jq` is unavailable, pipe the same `curl` through `grep -o '"version":"[^"]*"'` as a fallback.
 
 ## Troubleshooting
 
