@@ -30,24 +30,24 @@ This repository is a Node.js 22+ TypeScript MCP server for Simplenote. It expose
 Use Node.js 22 or newer (see .nvmrc)
 
 ```bash
-npm ci
-npm run typecheck
-npm test
-npm run build
+pnpm install
+pnpm typecheck
+pnpm test
+pnpm build
 ```
 
-- `npm run typecheck` runs `tsc --noEmit`.
-- `npm test` runs `node --import tsx --test "tests/**/*.test.ts"`.
-- `npm run build` runs `tsc` and makes `dist/server.js` executable.
-- `npm start` runs the built server from `dist/server.js`; build first.
-- `npm run inspect` starts MCP Inspector against `node dist/server.js`; build first.
+- `pnpm typecheck` runs `tsc --noEmit`.
+- `pnpm test` runs `node --import tsx --test "tests/**/*.test.ts"`.
+- `pnpm build` runs `tsc` and makes `dist/server.js` executable.
+- `pnpm start` runs the built server from `dist/server.js`; build first.
+- `pnpm inspect` starts MCP Inspector against `node dist/server.js`; build first.
 
 Before requesting review, run at least:
 
 ```bash
-npm run typecheck
-npm test
-npm run build
+pnpm typecheck
+pnpm test
+pnpm build
 ```
 
 ## Coding Conventions
