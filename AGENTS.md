@@ -23,6 +23,7 @@ This repository is a Node.js 22+ TypeScript MCP server for Simplenote. It expose
 - `src/telemetry.ts` sends anonymous setup/tool-call events through Tracks. Telemetry MUST NOT include note IDs, note content, tags, search queries, Simplenote account details, or tokens.
 - `tests/` mirrors source areas and uses Node's built-in test runner with `tsx`.
 - `server.js` at the repo root is a compatibility shim that imports `dist/server.js`; keep it stable unless intentionally changing local-checkout compatibility.
+- `server.json` at the repo root is the MCP Registry manifest. Its top-level `version` and `packages[0].version` must match `package.json`'s `version`; see Releases.
 - `dist/` is build output. Do not hand-edit it.
 
 ## Commands
@@ -67,8 +68,8 @@ npm run build
 - `update_note` replaces the entire note content when `content` is provided, and replaces the entire tag list when `tags` is provided. Any workflow or tool description that edits part of a note MUST first read the existing note and send the full desired replacement.
 - Simperium writes must preserve fields not represented by `NormalizedNote` (`publishURL`, `shareURL`, unknown `systemTags`, etc.). Fetch the raw note, merge changes, then POST the full body.
 - Simperium note IDs must be URL-encoded before use in request paths.
-- Keep the rolling write-rate guard in `simperium-api.ts` effective for successful writes. It is there to interrupt runaway bulk edits.
-- The API provider caches reads for 60 seconds and may return stale cache only for transient network/request failures. Auth failures and invalid response shapes must surface.
+- Keep the rolling write-rate guard in `simperium-api.ts` (`WRITE_RATE_WINDOW_MS` / `WRITE_RATE_MAX`) effective for successful writes. It is there to interrupt runaway bulk edits.
+- The API provider caches reads (`CACHE_TTL_MS` in `simperium-api.ts`) and may return stale cache only for transient network/request failures. Auth failures and invalid response shapes must surface.
 - Token files must stay private (`0600` where POSIX permissions apply). Config files are intentionally `0644`. Telemetry state uses `0600`.
 
 ## Testing Standards
@@ -89,12 +90,14 @@ npm run build
 - The PR template expects a related issue link, proposed changes, rationale, testing, and a pre-merge checklist.
 - If README wording conflicts with current source/tests, treat source and tests as the immediate implementation source of truth, then fix the docs as part of the change when it affects users.
 
+## Releases
+
+- `DEPLOY.md` is the authoritative npm + MCP Registry release runbook; follow it for release work.
+- A version bump touches three fields in the same commit: `version` in `package.json`, and both the top-level `version` and `packages[0].version` in `server.json`.
+
 ## Common Pitfalls
 
 - Do not assume the server is read-only everywhere. Local mode is read-only, API mode can expose write tools when `writeMode` is enabled.
-- Do not register capability-gated tools unconditionally; clients should only see tools supported by the resolved provider.
-- Do not send partial note content to `updateNote` unless the intended result is to replace the entire note with that partial content.
 - Do not log or emit note content, note IDs, private tags, Simplenote tokens, or account details in telemetry or test snapshots.
 - Do not script repeated login attempts; Simplenote login endpoints are rate-limited.
 - Do not add real network calls to tests to "prove" Simperium behavior. Model the HTTP contract with mocked `Response` objects.
-- Do not hand-edit `dist/`; build it.
