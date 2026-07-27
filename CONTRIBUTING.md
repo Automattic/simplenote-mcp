@@ -7,15 +7,15 @@ Thanks for helping improve Simplenote MCP. This project is a Node.js MCP server 
 Use Node.js 22 or newer.
 
 ```bash
-npm ci
-npm run typecheck
-npm test
+pnpm install
+pnpm typecheck
+pnpm test
 ```
 
 To build the distributable files:
 
 ```bash
-npm run build
+pnpm build
 ```
 
 ## Pull Requests
@@ -27,9 +27,9 @@ Keep changes focused and include tests when behavior changes. For user-facing be
 Before requesting review, run:
 
 ```bash
-npm run typecheck
-npm test
-npm run build
+pnpm typecheck
+pnpm test
+pnpm build
 ```
 
 ## Issues

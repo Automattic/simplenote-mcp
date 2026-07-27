@@ -467,10 +467,10 @@ Source lives in `src/`, compiled output in `dist/`.
 ```bash
 git clone https://github.com/Automattic/simplenote-mcp.git
 cd simplenote-mcp
-npm install          # installs deps + builds via `prepare`
-npm test             # runs the test suite
-npm run typecheck    # tsc --noEmit
-npm run build        # tsc + chmod +x on the bin
+pnpm install         # installs deps + builds via `prepare`
+pnpm test            # runs the test suite
+pnpm typecheck       # tsc --noEmit
+pnpm build           # tsc + chmod +x on the bin
 ```
 
 ### Testing locally with MCP Inspector
@@ -480,8 +480,8 @@ npm run build        # tsc + chmod +x on the bin
 **Run against the local build:**
 
 ```bash
-npm run build
-npm run inspect
+pnpm build
+pnpm inspect
 ```
 
 Open the URL it prints and click **Connect**.
@@ -489,7 +489,7 @@ Open the URL it prints and click **Connect**.
 **Run from source without rebuilding** (fastest iteration — uses `tsx`):
 
 ```bash
-npx @modelcontextprotocol/inspector npx tsx src/server.ts
+pnpm dlx @modelcontextprotocol/inspector pnpm exec tsx src/server.ts
 ```
 
 **Test the published npm package** (exactly what users get):
@@ -502,7 +502,7 @@ npx @modelcontextprotocol/inspector npx -y @automattic/simplenote-mcp
 
 - Force the native macOS provider against a custom store (overrides config):
   ```bash
-  npx @modelcontextprotocol/inspector node dist/server.js --path /path/to/Simplenote.storedata
+  pnpm dlx @modelcontextprotocol/inspector node dist/server.js --path /path/to/Simplenote.storedata
   ```
 - Use the Simperium API provider — requires `simplenote-mcp setup` to have been run with API mode selected first, which writes a config with `source: 'api'` and an `auth.json` token. Inspector then picks the API provider automatically. To use a different token for the session, export `SIMPLENOTE_TOKEN` before launching Inspector (overrides `auth.json`), or paste it into the Inspector UI's **Environment Variables** panel.
 
@@ -514,7 +514,7 @@ The repo includes a project-scoped `.mcp.json` that registers the local source a
 
 Workflow:
 
-1. Run `npm install` so `tsx` is available, and `simplenote-mcp setup` once if you haven't already; the dev server reads the same `config.json`/`auth.json` as a normal install.
+1. Run `pnpm install` so `tsx` is available, and `simplenote-mcp setup` once if you haven't already; the dev server reads the same `config.json`/`auth.json` as a normal install.
 2. Open Claude Code in the repo dir and approve `simplenote-dev` when prompted.
 3. Edit `src/`, save, then in Claude Code run `/mcp` and reconnect `simplenote-dev` to pick up the change.
 

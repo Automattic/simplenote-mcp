@@ -21,10 +21,10 @@ Cut a PR with the version bump and metadata changes before publishing.
 3. Run the standard verification:
 
    ```bash
-   npm ci
-   npm run typecheck
-   npm test
-   npm run build
+   pnpm install --frozen-lockfile
+   pnpm typecheck
+   pnpm test
+   pnpm build
    ```
 
 4. Open the PR, get it reviewed, and merge.
@@ -36,8 +36,8 @@ Run these commands from a clean checkout of `main` at the merged release commit.
 ### 1. Publish to npm
 
 ```bash
-npm ci
-npm run build
+pnpm install --frozen-lockfile
+pnpm build
 npm pack --dry-run    # eyeball the file list and embedded version
 npm publish
 ```

@@ -18,8 +18,8 @@
     "start": "node dist/server.js",
     "build": "tsc && shx chmod +x dist/server.js",
     "typecheck": "tsc --noEmit",
-    "prepare": "npm run build",
-    "inspect": "npx @modelcontextprotocol/inspector node dist/server.js",
+    "prepare": "pnpm build",
+    "inspect": "pnpm dlx @modelcontextprotocol/inspector node dist/server.js",
     "test": "node --import tsx --test \"tests/**/*.test.ts\""
   },
   "keywords": [
@@ -41,6 +41,12 @@
   },
   "engines": {
     "node": ">=22.0.0"
+  },
+  "packageManager": "pnpm@10.30.3",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
   },
   "dependencies": {
     "@automattic/node-tracks": "^0.6.1",
