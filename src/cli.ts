@@ -2,12 +2,15 @@ import { existsSync } from 'node:fs';
 import { platform } from 'node:os';
 import { createInterface, type Interface } from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
+import { openBrowser as defaultOpenBrowser } from './browser.js';
 import {
 	AuthError,
+	type AuthToken,
 	completeLogin,
 	deleteToken,
+	getLoginUrl,
 	loadToken,
-	requestLoginCode,
+	parseLoginCredential,
 	saveToken,
 } from './providers/auth.js';
 import {
@@ -38,7 +41,14 @@ export type SetupOptions = {
 	platform?: () => NodeJS.Platform;
 	fileExists?: (path: string) => boolean;
 	nativeStorePath?: string;
+	env?: NodeJS.ProcessEnv;
+	openBrowser?: (url: string) => Promise<boolean>;
+	rateLimitDelayMs?: number;
 };
+
+// A mangled paste doesn't consume the code, so allow a few tries before
+// giving up.
+const MAX_CREDENTIAL_PROMPTS = 3;
 
 export async function runSubcommand(name: Subcommand): Promise<number> {
 	switch (name) {
@@ -114,33 +124,8 @@ async function setupCommand(opts: SetupOptions = {}): Promise<number> {
 			}
 		} else {
 			auth = 'new_login';
-			const email = (await rl.question('Simplenote email: ')).trim();
-			if (!email) {
-				console.error('Email is required.');
-				return 1;
-			}
-
-			try {
-				await requestLoginCode(email);
-			} catch (err) {
-				return reportAuthError(err, 'Could not request login code.');
-			}
-
-			console.log(
-				`\nCheck ${email} for a message from Simplenote with a short auth code.`,
-			);
-			const authCode = (await rl.question('Auth code: ')).trim().toUpperCase();
-			if (!authCode) {
-				console.error('Auth code is required.');
-				return 1;
-			}
-
-			let token;
-			try {
-				token = await completeLogin(email, authCode);
-			} catch (err) {
-				return reportAuthError(err, 'Login failed.');
-			}
+			const token = await loginWithBrowser(rl, opts);
+			if (typeof token === 'number') return token;
 
 			try {
 				await saveToken(token, opts.authPath);
@@ -150,7 +135,7 @@ async function setupCommand(opts: SetupOptions = {}): Promise<number> {
 				return 1;
 			}
 
-			username = token.username ?? email;
+			username = token.username ?? 'unknown';
 			console.log(`\nLogged in as ${username}.\n`);
 		}
 
@@ -188,6 +173,69 @@ async function setupCommand(opts: SetupOptions = {}): Promise<number> {
 	}
 }
 
+// Sends the user to the browser login and redeems the `email:CODE` string it
+// shows. Returns the token, or an exit code after printing the failure.
+async function loginWithBrowser(
+	rl: Interface,
+	opts: SetupOptions,
+): Promise<AuthToken | number> {
+	const env = opts.env ?? process.env;
+	let loginUrl: string;
+	try {
+		loginUrl = getLoginUrl(env);
+	} catch (err) {
+		return reportAuthError(err, 'Invalid configuration.');
+	}
+
+	const opened = await (opts.openBrowser ?? defaultOpenBrowser)(loginUrl);
+	if (opened) {
+		console.log('Opening your browser to log in to Simplenote.');
+		console.log(`If it didn't open, visit:\n\n  ${loginUrl}\n`);
+	} else {
+		console.log(`Open this URL in a browser to log in to Simplenote:\n\n  ${loginUrl}\n`);
+	}
+	console.log('After you log in, the page shows a code like you@example.com:ABC123.');
+
+	let credential: ReturnType<typeof parseLoginCredential> = null;
+	for (let i = 0; i < MAX_CREDENTIAL_PROMPTS && !credential; i++) {
+		const input = await rl.question('Paste it here: ');
+		credential = parseLoginCredential(input);
+		if (!credential) {
+			console.error('Expected the full code shown in your browser, in the form email:CODE.');
+		}
+	}
+	if (!credential) return 1;
+
+	// Ctrl-C closes the readline interface; abort any rate-limit wait with it.
+	const controller = new AbortController();
+	const onClose = () => controller.abort();
+	rl.once('close', onClose);
+	try {
+		const token = await completeLogin(credential.username, credential.authCode, {
+			env,
+			signal: controller.signal,
+			rateLimitDelayMs: opts.rateLimitDelayMs,
+			onRateLimited: (delayMs) => {
+				console.log(
+					`Simplenote is rate limiting logins; retrying in ${Math.round(delayMs / 1000)}s. (Ctrl-C to cancel)`,
+				);
+			},
+		});
+		controller.signal.throwIfAborted();
+		return token;
+	} catch (err) {
+		if (isAbortError(err)) throw err;
+		if (err instanceof AuthError && err.code === 'invalid_code') {
+			console.error(`Login failed. ${err.message}`);
+			console.error('Run setup again to get a fresh code.');
+			return 1;
+		}
+		return reportAuthError(err, 'Login failed.');
+	} finally {
+		rl.off('close', onClose);
+	}
+}
+
 function defaultPrompt(): Interface {
 	return createInterface({ input: stdin, output: stdout });
 }
@@ -206,7 +254,10 @@ async function loadCurrentConfigOrNull(configPath?: string): Promise<Config | nu
 }
 
 function isAbortError(err: unknown): boolean {
-	return err instanceof Error && (err as NodeJS.ErrnoException).code === 'ABORT_ERR';
+	return (
+		err instanceof Error &&
+		((err as NodeJS.ErrnoException).code === 'ABORT_ERR' || err.name === 'AbortError')
+	);
 }
 
 async function logoutCommand(): Promise<number> {

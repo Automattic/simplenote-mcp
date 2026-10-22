@@ -14,7 +14,7 @@ Run setup once:
 npx -y @automattic/simplenote-mcp setup
 ```
 
-On macOS with the [Simplenote desktop app](https://simplenote.com/) installed and synced, setup detects the local database and asks whether to use it. Accepting that option is fully offline and read-only. On Linux, Windows, or macOS without the desktop app, setup prompts for your Simplenote email, sends an auth code, then asks for the code and whether to enable write mode.
+On macOS with the [Simplenote desktop app](https://simplenote.com/) installed and synced, setup detects the local database and asks whether to use it. Accepting that option is fully offline and read-only. On Linux, Windows, or macOS without the desktop app, setup opens Simplenote's login page in your browser. After you log in, the page shows a one-time code; paste it into setup, then choose whether to enable write mode.
 
 Then register the server with your MCP client.
 
@@ -65,7 +65,9 @@ npx -y @automattic/simplenote-mcp setup
 
 If a local macOS Simplenote database is detected, setup offers to use it and writes `config.json` with `source: "local"`.
 
-Otherwise, setup checks for an existing token in `auth.json`. If one is already stored, setup reuses it and only asks whether to enable write mode. If no token is stored, setup prompts for your Simplenote email, sends a magic-link email containing a short auth code, prompts for the code, and then asks whether to enable write mode. On success, it writes `config.json` and stores the token with mode `0600` in `auth.json`.
+Otherwise, setup checks for an existing token in `auth.json`. If one is already stored, setup reuses it and only asks whether to enable write mode. If no token is stored, setup opens `https://app.simplenote.com/login/?source=mcp` in your browser and also prints the link. It doesn't try to open a browser over SSH or on Linux without a display, so you can open the link on any machine. Log in with any method Simplenote supports (email code, password, or WordPress.com). Instead of logging you in to the web app, the page shows a code like `you@example.com:ABC123`; paste the whole string at the setup prompt. Setup then asks whether to enable write mode. On success, it writes `config.json` and stores the token with mode `0600` in `auth.json`.
+
+Codes are single-use and expire 5 minutes after they're shown. If setup reports that the code was rejected, run setup again to get a fresh one.
 
 | Platform | Path |
 |----------|------|
@@ -104,7 +106,7 @@ Set `writeMode` to `true` only when you want write tools exposed.
 
 ### Token lifetime
 
-Magic-link tokens appear sticky per user (requesting a new code often returns the same token until invalidated server-side). No expiry has been observed in normal use; treat any 401 from the Simperium API as "remove the old token and run setup again." There is no automatic refresh — magic-link auth requires user interaction. The authentication endpoint is rate-limited (repeated failures lock the IP out for ~10 minutes), so don't script repeated attempts.
+No token expiry has been observed in normal use; treat any 401 from the Simperium API as "remove the old token and run setup again." There is no automatic refresh: getting a new token always requires logging in through the browser. Redeeming the code is rate-limited; if setup hits the limit, it waits and retries. Don't script repeated login attempts.
 
 ## Configuration
 
@@ -454,8 +456,11 @@ On macOS the default path is `~/Library/Group Containers/PZYM8XX95Q.com.automatt
 **"command not found: npx" / "spawn npx ENOENT" on Windows**
 See the `cmd /c` wrapping in [Windows notes](#windows-notes).
 
-**Setup emails aren't arriving**
-Check spam. The authentication endpoint is rate-limited — multiple failures in quick succession will lock the IP out for ~10 minutes. Wait, then try again.
+**"Code rejected" during setup**
+Codes are single-use and expire 5 minutes after the page shows them. Run setup again and paste the new code promptly. Paste the whole `email:CODE` string, not just the code.
+
+**Setup's browser window didn't open**
+Setup always prints the login URL; open it in any browser, even on another machine. Setup skips opening a browser over SSH and on Linux without `DISPLAY`/`WAYLAND_DISPLAY`.
 
 **Everything looks fine but data seems stale**
 Simperium responses are cached for 60 seconds; the native macOS provider refreshes when the store file's mtime changes. Wait a minute, or restart the MCP client to force a re-fetch.
@@ -521,6 +526,16 @@ Workflow:
 Project scope means the dev server only attaches in this directory — it doesn't pollute Claude Code sessions elsewhere on your machine.
 
 > **Heads-up:** if your `config.json` has `writeMode: true`, the dev server mutates your real Simplenote notes — there's no isolation between dev and prod data. Either run setup with write mode disabled while iterating, or test against a throwaway Simplenote account.
+
+### Testing against a dev Simplenote host
+
+`SIMPLENOTE_APP_URL` points setup's login and code redemption at another Simplenote web host:
+
+```bash
+SIMPLENOTE_APP_URL=https://simplenote.example.test npx tsx src/server.ts setup
+```
+
+If that host issues tokens for a different Simperium app, also set `SIMPLENOTE_APP_ID` when running the server. Setup reuses any token already in `auth.json`, and a new login overwrites it, so run `logout` first and again when you switch back to production.
 
 `server.js` at the repo root is a thin shim that imports `dist/server.js`, kept stable for users who wired up configs pointing at the local clone before the npm package existed.
 

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 import { strict as assert } from 'node:assert';
+import { EventEmitter } from 'node:events';
 import { readFile, stat, symlink, writeFile } from 'node:fs/promises';
 import { platform } from 'node:os';
 import type { Interface } from 'node:readline/promises';
@@ -10,6 +11,7 @@ import {
 	captureConsole,
 	captureConsoleSync,
 	type FetchScriptEntry,
+	mockFetch,
 	mockFetchQueue,
 	useEnvVar,
 	useTmpDir,
@@ -140,10 +142,13 @@ const LOCAL_AVAILABLE = {
 
 // A minimal readline Interface stand-in that replays scripted responses for
 // each prompt in order. Extra prompts throw so tests surface unexpected flow.
+// Like the real Interface, close() emits 'close' (as Ctrl-C does). The most
+// recently created instance is exposed as `makePrompt.last`.
 function makePrompt(responses: string[]): () => Interface {
 	return () => {
 		let i = 0;
-		const fake = {
+		let closed = false;
+		const fake = Object.assign(new EventEmitter(), {
 			question: async (_query: string) => {
 				if (i >= responses.length) {
 					throw new Error(
@@ -152,11 +157,17 @@ function makePrompt(responses: string[]): () => Interface {
 				}
 				return responses[i++]!;
 			},
-			close: () => {},
-		};
+			close: () => {
+				if (closed) return;
+				closed = true;
+				fake.emit('close');
+			},
+		});
+		makePrompt.last = fake;
 		return fake as unknown as Interface;
 	};
 }
+makePrompt.last = null as null | { close: () => void };
 
 async function fileExists(path: string): Promise<boolean> {
 	try {
@@ -183,15 +194,28 @@ async function runSetup(args: {
 	responses: string[];
 	telemetry?: Telemetry;
 	fetchScript?: FetchScriptEntry[];
-}): Promise<{ exitCode: number; stdout: string[]; stderr: string[] }> {
+}): Promise<{
+	exitCode: number;
+	stdout: string[];
+	stderr: string[];
+	openedUrls: string[];
+}> {
 	if (args.fetchScript) {
 		mockFetchQueue(args.fetchScript);
 	}
 	const out = captureConsole('log');
 	const err = captureConsole('error');
+	const openedUrls: string[] = [];
 	let exitCode: number;
 	try {
 		exitCode = await setupCommand({
+			// Never launch a real browser or read the real SIMPLENOTE_APP_URL.
+			env: {},
+			openBrowser: async (url) => {
+				openedUrls.push(url);
+				return false;
+			},
+			rateLimitDelayMs: 0,
 			...args.profile,
 			authPath: args.tmp.path('auth.json'),
 			configPath: args.tmp.path('config.json'),
@@ -202,7 +226,7 @@ async function runSetup(args: {
 		out.restore();
 		err.restore();
 	}
-	return { exitCode, stdout: out.lines, stderr: err.lines };
+	return { exitCode, stdout: out.lines, stderr: err.lines, openedUrls };
 }
 
 function captureTelemetry(): {
@@ -351,23 +375,23 @@ describe('setupCommand — not logged in', () => {
 		mock.restoreAll();
 	});
 
-	it('runs the full login flow, saves token, then saves config', async () => {
+	const SUCCESS: FetchScriptEntry = {
+		status: 200,
+		body: { username: 'mark@example.com', sync_token: 'tok123' },
+	};
+
+	it('runs the browser login flow, saves token, then saves config', async () => {
 		const captured = captureTelemetry();
-		const { exitCode } = await runSetup({
+		const { exitCode, openedUrls, stdout } = await runSetup({
 			tmp,
 			profile: NO_LOCAL,
-			responses: ['mark@example.com', 'T7YLLP', 'y'],
+			responses: ['  mark@example.com:t7yllp  ', 'y'],
 			telemetry: captured.telemetry,
-			fetchScript: [
-				{ status: 200, body: {} },
-				{
-					status: 200,
-					body: { username: 'mark@example.com', sync_token: 'tok123' },
-				},
-			],
+			fetchScript: [SUCCESS],
 		});
 		assert.equal(exitCode, 0);
-		assert.equal(await fileExists(tmp.path('auth.json')), true);
+		assert.deepEqual(openedUrls, ['https://app.simplenote.com/login/?source=mcp']);
+		assert.match(stdout.join('\n'), /Open this URL in a browser[\s\S]*\/login\/\?source=mcp/);
 		const auth = JSON.parse(await readFile(tmp.path('auth.json'), 'utf-8'));
 		assert.deepEqual(auth, { username: 'mark@example.com', token: 'tok123' });
 		const config = JSON.parse(await readFile(tmp.path('config.json'), 'utf-8'));
@@ -382,27 +406,121 @@ describe('setupCommand — not logged in', () => {
 		]);
 	});
 
+	it('still prints the URL when the browser opened', async () => {
+		const { exitCode, stdout } = await runSetup({
+			tmp,
+			profile: { ...NO_LOCAL, openBrowser: async () => true },
+			responses: ['mark@example.com:T7YLLP', 'n'],
+			fetchScript: [SUCCESS],
+		});
+		assert.equal(exitCode, 0);
+		const joined = stdout.join('\n');
+		assert.match(joined, /Opening your browser/);
+		assert.match(joined, /https:\/\/app\.simplenote\.com\/login\/\?source=mcp/);
+	});
+
+	it('sends the user to SIMPLENOTE_APP_URL and redeems the code there', async () => {
+		const urls: string[] = [];
+		mockFetch(async (url) => {
+			urls.push(url);
+			return Response.json({ username: 'mark@example.com', sync_token: 'tok' });
+		});
+		const { exitCode, openedUrls } = await runSetup({
+			tmp,
+			profile: { ...NO_LOCAL, env: { SIMPLENOTE_APP_URL: 'https://simplenote.example.test' } },
+			responses: ['mark@example.com:T7YLLP', 'n'],
+		});
+		assert.equal(exitCode, 0);
+		assert.deepEqual(openedUrls, ['https://simplenote.example.test/login/?source=mcp']);
+		assert.deepEqual(urls, ['https://simplenote.example.test/account/complete-login']);
+	});
+
+	it('exits 1 before prompting when SIMPLENOTE_APP_URL is invalid', async () => {
+		const { exitCode, stderr, openedUrls } = await runSetup({
+			tmp,
+			profile: { ...NO_LOCAL, env: { SIMPLENOTE_APP_URL: 'not a url' } },
+			responses: [],
+		});
+		assert.equal(exitCode, 1);
+		assert.deepEqual(openedUrls, []);
+		assert.ok(stderr.some((l) => /SIMPLENOTE_APP_URL/.test(l)));
+		assert.equal(await fileExists(tmp.path('config.json')), false);
+	});
+
+	it('re-prompts after a malformed paste without calling the server', async () => {
+		const state = mockFetchQueue([SUCCESS]);
+		const { exitCode, stderr } = await runSetup({
+			tmp,
+			profile: NO_LOCAL,
+			responses: ['T7YLLP', 'mark@example.com:T7YLLP', 'n'],
+		});
+		assert.equal(exitCode, 0);
+		assert.equal(state.calls, 1);
+		assert.ok(stderr.some((l) => /email:CODE/.test(l)));
+	});
+
+	it('gives up after repeated malformed pastes', async () => {
+		const state = mockFetchQueue([]);
+		const { exitCode } = await runSetup({
+			tmp,
+			profile: NO_LOCAL,
+			responses: ['', 'nope', 'still nope'],
+		});
+		assert.equal(exitCode, 1);
+		assert.equal(state.calls, 0);
+		assert.equal(await fileExists(tmp.path('auth.json')), false);
+		assert.equal(await fileExists(tmp.path('config.json')), false);
+	});
+
+	it('exits 1 with start-over guidance when the code is rejected', async () => {
+		const { exitCode, stderr } = await runSetup({
+			tmp,
+			profile: NO_LOCAL,
+			responses: ['mark@example.com:BADBAD'],
+			fetchScript: [{ status: 400, body: { error: 'error-completing-login' } }],
+		});
+		assert.equal(exitCode, 1);
+		assert.ok(stderr.some((l) => /Run setup again/.test(l)));
+		assert.equal(await fileExists(tmp.path('auth.json')), false);
+		assert.equal(await fileExists(tmp.path('config.json')), false);
+	});
+
+	it('waits out a 429 and retries the same code', async () => {
+		const { exitCode, stdout } = await runSetup({
+			tmp,
+			profile: NO_LOCAL,
+			responses: ['mark@example.com:T7YLLP', 'n'],
+			fetchScript: [{ status: 429, body: { error: 'too-many-requests' } }, SUCCESS],
+		});
+		assert.equal(exitCode, 0);
+		assert.ok(stdout.some((l) => /rate limiting logins; retrying/.test(l)));
+		assert.equal(await fileExists(tmp.path('auth.json')), true);
+	});
+
+	it('aborts a rate-limit wait on Ctrl-C (readline close)', async () => {
+		mockFetch(async () => {
+			setImmediate(() => makePrompt.last?.close());
+			return Response.json({ error: 'too-many-requests' }, { status: 429 });
+		});
+		const { exitCode, stdout } = await runSetup({
+			tmp,
+			profile: { ...NO_LOCAL, rateLimitDelayMs: 60_000 },
+			responses: ['mark@example.com:T7YLLP'],
+		});
+		assert.equal(exitCode, 1);
+		assert.ok(stdout.some((l) => /Aborted/.test(l)));
+		assert.equal(await fileExists(tmp.path('auth.json')), false);
+	});
+
 	it('exits 1 on network failure and writes no config', async () => {
 		const { exitCode } = await runSetup({
 			tmp,
 			profile: NO_LOCAL,
-			responses: ['mark@example.com'],
+			responses: ['mark@example.com:T7YLLP'],
 			fetchScript: [{ throws: new Error('network refused') }],
 		});
 		assert.equal(exitCode, 1);
 		assert.equal(await fileExists(tmp.path('config.json')), false);
-	});
-
-	it('exits 1 on empty email; no token, no config written', async () => {
-		const { exitCode, stderr } = await runSetup({
-			tmp,
-			profile: NO_LOCAL,
-			responses: [''],
-		});
-		assert.equal(exitCode, 1);
-		assert.equal(await fileExists(tmp.path('auth.json')), false);
-		assert.equal(await fileExists(tmp.path('config.json')), false);
-		assert.ok(stderr.some((l) => /Email is required/.test(l)));
 	});
 });
 
@@ -447,10 +565,9 @@ describe('setupCommand — local DB detected', () => {
 		const { exitCode } = await runSetup({
 			tmp,
 			profile: LOCAL_AVAILABLE,
-			// local prompt → n, then email, code, writeMode
-			responses: ['n', 'mark@example.com', 'T7YLLP', 'y'],
+			// local prompt → n, then pasted code, writeMode
+			responses: ['n', 'mark@example.com:T7YLLP', 'y'],
 			fetchScript: [
-				{ status: 200, body: {} },
 				{
 					status: 200,
 					body: { username: 'mark@example.com', sync_token: 'tok123' },
