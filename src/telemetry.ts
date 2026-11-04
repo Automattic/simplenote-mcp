@@ -57,10 +57,13 @@ type NodeTracksFactory = (
 ) => NodeTracks;
 
 type NodeTracks = {
-	trackEvent(
+	// Unlike trackEvent, this handles request errors (an unhandled one crashes
+	// the process, e.g. when offline) and closes the socket after the timeout.
+	trackEventAndForget(
 		eventName: string,
 		extraParams?: ParsedUrlQueryInput,
 		logger?: typeof NOOP_TRACKS_LOGGER,
+		timeoutMs?: number,
 	): Promise<void>;
 };
 
@@ -207,7 +210,12 @@ function createTracksTelemetryClient(
 		async trackEvent(eventName, props = {}) {
 			try {
 				await withTimeout(
-					tracks.trackEvent(eventName, toTracksParams(props), NOOP_TRACKS_LOGGER),
+					tracks.trackEventAndForget(
+						eventName,
+						toTracksParams(props),
+						NOOP_TRACKS_LOGGER,
+						timeoutMs,
+					),
 					timeoutMs,
 				);
 			} catch {
@@ -327,6 +335,7 @@ const NOOP_TRACKS_LOGGER = {
 };
 
 export const _test = {
+	createNodeTracksClient,
 	createTracksTelemetryClient,
 	loadTelemetryState,
 	toTracksParams,
