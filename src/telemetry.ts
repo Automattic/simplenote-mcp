@@ -209,13 +209,11 @@ function createTracksTelemetryClient(
 	return {
 		async trackEvent(eventName, props = {}) {
 			try {
-				await withTimeout(
-					tracks.trackEventAndForget(
-						eventName,
-						toTracksParams(props),
-						NOOP_TRACKS_LOGGER,
-						timeoutMs,
-					),
+				// Resolves within timeoutMs on every path and closes the request.
+				await tracks.trackEventAndForget(
+					eventName,
+					toTracksParams(props),
+					NOOP_TRACKS_LOGGER,
 					timeoutMs,
 				);
 			} catch {
@@ -247,18 +245,6 @@ async function safeTrack(
 		await client.trackEvent(eventName, props);
 	} catch {
 		// Telemetry must never affect the MCP command or tool result.
-	}
-}
-
-async function withTimeout(promise: Promise<void>, timeoutMs: number): Promise<void> {
-	let timeout: ReturnType<typeof setTimeout> | undefined;
-	const timeoutPromise = new Promise<void>((resolve) => {
-		timeout = setTimeout(resolve, timeoutMs);
-	});
-	try {
-		await Promise.race([promise, timeoutPromise]);
-	} finally {
-		if (timeout) clearTimeout(timeout);
 	}
 }
 

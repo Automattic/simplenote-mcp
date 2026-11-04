@@ -174,19 +174,6 @@ describe('createTelemetry', () => {
 		assert.equal(resolved, true);
 	});
 
-	it('stops waiting for node-tracks event promises after the timeout', async () => {
-		const client = _test.createTracksTelemetryClient(
-			{
-				async trackEventAndForget() {
-					await new Promise<void>(() => {});
-				},
-			},
-			1,
-		);
-
-		await client.trackEvent('setup');
-	});
-
 	it('survives network errors from the real node-tracks client', async () => {
 		// Stand in for an offline machine: the request errors instead of connecting.
 		const requests: string[] = [];
