@@ -43,7 +43,7 @@
     "node": ">=22.0.0"
   },
   "dependencies": {
-    "@automattic/node-tracks": "^0.6.1",
+    "@automattic/node-tracks": "^0.7.1",
     "@modelcontextprotocol/sdk": "^1.32.0",
     "fast-xml-parser": "^5.8.0",
     "zod": "^4.6.6"

@@ -7,12 +7,21 @@ import {
 	AuthError,
 	completeLogin,
 	deleteToken,
+	getAppUrl,
+	getLoginUrl,
 	loadToken,
-	requestLoginCode,
+	parseLoginCredential,
 	saveToken,
 	_test,
 } from '../src/providers/auth.ts';
-import { captureConsole, mockFetch, useTmpDir } from './helpers/general.ts';
+import { USER_AGENT } from '../src/version.ts';
+import {
+	captureConsole,
+	captureFetch,
+	mockFetch,
+	mockFetchQueue,
+	useTmpDir,
+} from './helpers/general.ts';
 
 const { extractToken, extractUsername } = _test;
 
@@ -51,55 +60,92 @@ afterEach(() => {
 	mock.restoreAll();
 });
 
-describe('requestLoginCode', () => {
-	it('POSTs the right URL and body', async () => {
-		let observedUrl = '';
-		let observedBody: unknown;
-		mockFetch(async (url, init) => {
-			observedUrl = String(url);
-			assert.ok(init, 'expected fetch to be called with an init object');
-			assert.equal(typeof init.body, 'string', 'expected fetch init.body to be a string');
-			observedBody = JSON.parse(init.body as string);
-			return new Response('', { status: 200 });
-		});
-		await requestLoginCode('alice@example.com');
-		assert.equal(observedUrl, 'https://app.simplenote.com/account/request-login');
-		assert.deepEqual(observedBody, {
-			username: 'alice@example.com',
-			request_source: 'macOS',
+describe('getAppUrl / getLoginUrl', () => {
+	it('defaults to production', () => {
+		assert.equal(getAppUrl({}), 'https://app.simplenote.com');
+		assert.equal(getLoginUrl({}), 'https://app.simplenote.com/login/?source=mcp');
+	});
+
+	it('honors SIMPLENOTE_APP_URL and strips trailing slashes', () => {
+		const env = { SIMPLENOTE_APP_URL: ' https://simplenote.example.test// ' };
+		assert.equal(getAppUrl(env), 'https://simplenote.example.test');
+		assert.equal(getLoginUrl(env), 'https://simplenote.example.test/login/?source=mcp');
+	});
+
+	it('treats an empty SIMPLENOTE_APP_URL as unset', () => {
+		assert.equal(getAppUrl({ SIMPLENOTE_APP_URL: '  ' }), 'https://app.simplenote.com');
+	});
+
+	it('rejects malformed and non-http(s) values', () => {
+		for (const value of ['simplenote.example.test', 'ftp://simplenote.example.test', 'javascript:alert(1)']) {
+			assert.throws(
+				() => getAppUrl({ SIMPLENOTE_APP_URL: value }),
+				(err: unknown) => err instanceof AuthError && err.code === 'invalid_app_url',
+				value,
+			);
+		}
+	});
+});
+
+describe('parseLoginCredential', () => {
+	it('splits email and code', () => {
+		assert.deepEqual(parseLoginCredential('user@example.com:3QYXRL'), {
+			username: 'user@example.com',
+			authCode: '3QYXRL',
 		});
 	});
 
-	it('throws AuthError(request_failed) on non-2xx', async () => {
-		mockFetch(async () => new Response('', { status: 503 }));
-		await assert.rejects(
-			() => requestLoginCode('a@b.com'),
-			(err: unknown) =>
-				err instanceof AuthError && err.code === 'request_failed' && err.status === 503,
-		);
-	});
-
-	it('throws AuthError(network_error) when fetch throws', async () => {
-		mockFetch(async () => {
-			throw new Error('ENOTFOUND');
+	it('trims whitespace and uppercases the code', () => {
+		assert.deepEqual(parseLoginCredential('  user@example.com : 3qyxrl \n'), {
+			username: 'user@example.com',
+			authCode: '3QYXRL',
 		});
-		await assert.rejects(
-			() => requestLoginCode('a@b.com'),
-			(err: unknown) => err instanceof AuthError && err.code === 'network_error',
-		);
 	});
 
-	it('throws AuthError(rate_limited) on 429', async () => {
-		mockFetch(async () => new Response('', { status: 429 }));
-		await assert.rejects(
-			() => requestLoginCode('a@b.com'),
-			(err: unknown) =>
-				err instanceof AuthError && err.code === 'rate_limited' && err.status === 429,
-		);
+	it('splits on the last colon', () => {
+		assert.deepEqual(parseLoginCredential('"odd:local"@example.com:ABC123'), {
+			username: '"odd:local"@example.com',
+			authCode: 'ABC123',
+		});
+	});
+
+	it('does not enforce a code length', () => {
+		assert.equal(parseLoginCredential('a@b.com:ABCDEFGH')?.authCode, 'ABCDEFGH');
+	});
+
+	it('returns null without a colon or with an empty side', () => {
+		assert.equal(parseLoginCredential('3QYXRL'), null);
+		assert.equal(parseLoginCredential(':3QYXRL'), null);
+		assert.equal(parseLoginCredential('a@b.com:'), null);
+		assert.equal(parseLoginCredential('   '), null);
 	});
 });
 
 describe('completeLogin', () => {
+	it('POSTs only username and auth_code, with our User-Agent', async () => {
+		const { calls } = captureFetch(() =>
+			Response.json({ username: 'alice@example.com', sync_token: 'tok' }),
+		);
+		await completeLogin('alice@example.com', 'CODE99', { env: {} });
+		assert.equal(calls.length, 1);
+		assert.equal(calls[0]!.url, 'https://app.simplenote.com/account/complete-login');
+		assert.equal(calls[0]!.method, 'POST');
+		assert.deepEqual(calls[0]!.body, {
+			username: 'alice@example.com',
+			auth_code: 'CODE99',
+		});
+		assert.equal(calls[0]!.headers['User-Agent'], USER_AGENT);
+		assert.match(USER_AGENT, /^simplenote-mcp\/\d+\.\d+\.\d+/);
+	});
+
+	it('uses SIMPLENOTE_APP_URL for the request', async () => {
+		const { calls } = captureFetch(() => Response.json({ sync_token: 'tok' }));
+		await completeLogin('a@b.com', 'CODE', {
+			env: { SIMPLENOTE_APP_URL: 'https://simplenote.example.test/' },
+		});
+		assert.equal(calls[0]!.url, 'https://simplenote.example.test/account/complete-login');
+	});
+
 	it('returns AuthToken from a sync_token response', async () => {
 		mockFetch(async () =>
 			Response.json({ username: 'alice@example.com', sync_token: 'tok123' }),
@@ -112,6 +158,18 @@ describe('completeLogin', () => {
 		mockFetch(async () => Response.json({ sync_token: 'tok' }));
 		const out = await completeLogin('a@b.com', 'CODE');
 		assert.equal(out.username, 'a@b.com');
+	});
+
+	it('throws AuthError(invalid_code) on 400 without retrying', async () => {
+		const state = mockFetchQueue([
+			{ status: 400, body: { error: 'error-completing-login' } },
+		]);
+		await assert.rejects(
+			() => completeLogin('a@b.com', 'BAD'),
+			(err: unknown) =>
+				err instanceof AuthError && err.code === 'invalid_code' && err.status === 400,
+		);
+		assert.equal(state.calls, 1);
 	});
 
 	it('throws AuthError(invalid_code) on 401', async () => {
@@ -138,13 +196,61 @@ describe('completeLogin', () => {
 		);
 	});
 
-	it('throws AuthError(rate_limited) on 429', async () => {
-		mockFetch(async () => new Response('', { status: 429 }));
+	it('retries the same code after a 429 and succeeds', async () => {
+		const state = mockFetchQueue([
+			{ status: 429, body: { error: 'too-many-requests' } },
+			{ status: 200, body: { username: 'a@b.com', sync_token: 'tok' } },
+		]);
+		const waits: number[] = [];
+		const out = await completeLogin('a@b.com', 'CODE', {
+			rateLimitDelayMs: 0,
+			onRateLimited: (ms) => waits.push(ms),
+		});
+		assert.equal(out.token, 'tok');
+		assert.equal(state.calls, 2);
+		assert.deepEqual(waits, [0]);
+	});
+
+	it('gives up with AuthError(rate_limited) after bounded retries', async () => {
+		const state = mockFetchQueue([
+			{ status: 429, body: {} },
+			{ status: 429, body: {} },
+			{ status: 429, body: {} },
+		]);
 		await assert.rejects(
-			() => completeLogin('a@b.com', 'CODE'),
+			() => completeLogin('a@b.com', 'CODE', { rateLimitDelayMs: 0 }),
 			(err: unknown) =>
 				err instanceof AuthError && err.code === 'rate_limited' && err.status === 429,
 		);
+		assert.equal(state.calls, 3);
+	});
+
+	it('defaults to a 60-second wait and stops when aborted', async () => {
+		const state = mockFetchQueue([{ status: 429, body: {} }]);
+		const controller = new AbortController();
+		const waits: number[] = [];
+		await assert.rejects(
+			() =>
+				completeLogin('a@b.com', 'CODE', {
+					signal: controller.signal,
+					onRateLimited: (ms) => {
+						waits.push(ms);
+						controller.abort();
+					},
+				}),
+			(err: unknown) => err instanceof Error && err.name === 'AbortError',
+		);
+		assert.deepEqual(waits, [60_000]);
+		assert.equal(state.calls, 1);
+	});
+
+	it('does not retry after a network error', async () => {
+		const state = mockFetchQueue([{ throws: new Error('ECONNRESET') }]);
+		await assert.rejects(
+			() => completeLogin('a@b.com', 'CODE', { rateLimitDelayMs: 0 }),
+			(err: unknown) => err instanceof AuthError && err.code === 'network_error',
+		);
+		assert.equal(state.calls, 1);
 	});
 });
 

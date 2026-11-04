@@ -10,14 +10,16 @@ import {
 } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import { dirname } from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
+import { USER_AGENT } from '../version.js';
 import { getTokenPath } from './paths.js';
 
-const SIMPLENOTE_AUTH_BASE = 'https://app.simplenote.com';
-// The official macOS client uses platformName ("macOS"/"iOS"). Server-issued
-// tokens appear to be scoped by request_source — using a custom value yields
-// a token that is rejected by the Simperium API.
-const REQUEST_SOURCE = 'macOS';
+const DEFAULT_APP_URL = 'https://app.simplenote.com';
 const FETCH_TIMEOUT_MS = 15_000;
+// Redeeming is rate-limited, and codes expire 5 minutes after they're
+// shown. Two waits keeps a retry well inside that window.
+const RATE_LIMIT_DELAY_MS = 60_000;
+const MAX_RATE_LIMIT_RETRIES = 2;
 
 export type AuthToken = {
 	username: string | null;
@@ -37,18 +39,67 @@ export class AuthError extends Error {
 }
 
 export type AuthErrorCode =
+	| 'invalid_app_url'
 	| 'request_failed'
 	| 'invalid_code'
 	| 'invalid_response'
 	| 'network_error'
 	| 'rate_limited';
 
-async function postJson(path: string, body: unknown): Promise<Response> {
-	const url = `${SIMPLENOTE_AUTH_BASE}${path}`;
+// Base URL of the Simplenote web app. SIMPLENOTE_APP_URL lets dev builds on
+// other hosts be tested. Read per call so tests can scope the env var.
+export function getAppUrl(env: NodeJS.ProcessEnv = process.env): string {
+	const raw = env.SIMPLENOTE_APP_URL?.trim();
+	if (!raw) return DEFAULT_APP_URL;
+	let url: URL;
+	try {
+		url = new URL(raw);
+	} catch {
+		throw new AuthError(
+			'invalid_app_url',
+			`SIMPLENOTE_APP_URL is not a valid URL: ${raw}`,
+		);
+	}
+	if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+		throw new AuthError(
+			'invalid_app_url',
+			`SIMPLENOTE_APP_URL must be an http(s) URL: ${raw}`,
+		);
+	}
+	return raw.replace(/\/+$/, '');
+}
+
+// `source=mcp` makes the site show an `email:CODE` credential after login
+// instead of starting a browser session.
+export function getLoginUrl(env?: NodeJS.ProcessEnv): string {
+	return `${getAppUrl(env)}/login/?source=mcp`;
+}
+
+export type LoginCredential = {
+	username: string;
+	authCode: string;
+};
+
+// Parses the `email:CODE` string shown after browser login. Emails can't
+// contain a colon in practice, but split on the last one to be safe.
+export function parseLoginCredential(input: string): LoginCredential | null {
+	const trimmed = input.trim();
+	const sep = trimmed.lastIndexOf(':');
+	if (sep === -1) return null;
+	const username = trimmed.slice(0, sep).trim();
+	const authCode = trimmed.slice(sep + 1).trim().toUpperCase();
+	if (!username || !authCode) return null;
+	return { username, authCode };
+}
+
+async function postJson(url: string, body: unknown): Promise<Response> {
 	try {
 		return await fetch(url, {
 			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
+			headers: {
+				'Content-Type': 'application/json',
+				'User-Agent': USER_AGENT,
+			},
 			body: JSON.stringify(body),
 			signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
 		});
@@ -60,41 +111,44 @@ async function postJson(path: string, body: unknown): Promise<Response> {
 	}
 }
 
-export async function requestLoginCode(email: string): Promise<void> {
-	const res = await postJson('/account/request-login', {
-		username: email,
-		request_source: REQUEST_SOURCE,
-	});
+export type CompleteLoginOptions = {
+	env?: NodeJS.ProcessEnv;
+	// Called before each rate-limit wait so the CLI can tell the user.
+	onRateLimited?: (delayMs: number) => void;
+	// Aborts a rate-limit wait (e.g. on Ctrl-C). Rejects with an AbortError.
+	signal?: AbortSignal;
+	// Test hooks.
+	rateLimitDelayMs?: number;
+	maxRateLimitRetries?: number;
+};
 
-	if (res.status === 429) {
-		throw new AuthError(
-			'rate_limited',
-			'Too many login requests. Wait a few minutes and try again.',
-			429,
-		);
-	}
-	if (!res.ok) {
-		throw new AuthError(
-			'request_failed',
-			`Failed to request login code (HTTP ${res.status}).`,
-			res.status,
-		);
-	}
-}
-
+// Redeems a one-time code from the browser login for a sync token. Codes are
+// single-use, so only a 429 (where the server guarantees the code is still
+// valid) is retried; network errors are not, because the server may have
+// consumed the code before the connection failed.
 export async function completeLogin(
-	email: string,
+	username: string,
 	authCode: string,
+	opts: CompleteLoginOptions = {},
 ): Promise<AuthToken> {
-	const res = await postJson('/account/complete-login', {
-		username: email,
-		auth_code: authCode,
-	});
+	const url = `${getAppUrl(opts.env)}/account/complete-login`;
+	const delayMs = opts.rateLimitDelayMs ?? RATE_LIMIT_DELAY_MS;
+	const maxRetries = opts.maxRateLimitRetries ?? MAX_RATE_LIMIT_RETRIES;
 
-	if (res.status === 401 || res.status === 403) {
+	let res: Response;
+	for (let attempt = 0; ; attempt++) {
+		// No `source` field: `source: "web"` would start a browser session
+		// instead of returning a token.
+		res = await postJson(url, { username, auth_code: authCode });
+		if (res.status !== 429 || attempt >= maxRetries) break;
+		opts.onRateLimited?.(delayMs);
+		await sleep(delayMs, undefined, { signal: opts.signal });
+	}
+
+	if (res.status === 400 || res.status === 401 || res.status === 403) {
 		throw new AuthError(
 			'invalid_code',
-			'Auth code rejected. Check the code from your email and try again.',
+			'Code rejected. It may be mistyped, already used, or expired (codes expire 5 minutes after they are shown).',
 			res.status,
 		);
 	}
@@ -128,8 +182,7 @@ export async function completeLogin(
 		);
 	}
 
-	const username = extractUsername(parsed) ?? email;
-	return { username, token };
+	return { username: extractUsername(parsed) ?? username, token };
 }
 
 function extractToken(body: unknown): string | null {

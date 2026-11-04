@@ -9,6 +9,8 @@ This repository is a Node.js 22+ TypeScript MCP server for Simplenote. It expose
 - `src/server.ts` is the MCP entry point and composition root. It dispatches CLI subcommands before setup, parses server startup args, resolves the active provider, wires telemetry, registers tool groups, and connects over stdio.
 - `src/server-args.ts` parses server startup flags such as `--path`. Keep runtime server options here rather than in `src/cli.ts`.
 - `src/cli.ts` implements CLI subcommands: `setup`, `logout`, and `disable-telemetry`.
+- `src/browser.ts` opens the setup login URL in the user's browser (best effort; setup always prints the URL too).
+- `src/version.ts` exposes the package version and the `User-Agent` sent to Simplenote.
 - `src/tools/` contains MCP tool and prompt registration code:
   - `common.ts` defines shared registration context, annotations, and tool error formatting.
   - `read.ts` registers core read tools: list tags, list/search notes, and get note.
@@ -70,6 +72,7 @@ npm run build
 - Simperium note IDs must be URL-encoded before use in request paths.
 - Keep the rolling write-rate guard in `simperium-api.ts` (`WRITE_RATE_WINDOW_MS` / `WRITE_RATE_MAX`) effective for successful writes. It is there to interrupt runaway bulk edits.
 - The API provider caches reads (`CACHE_TTL_MS` in `simperium-api.ts`) and may return stale cache only for transient network/request failures. Auth failures and invalid response shapes must surface.
+- Setup authenticates via browser login: it opens `${SIMPLENOTE_APP_URL}/login/?source=mcp`, the user pastes the `email:CODE` string the page shows, and `completeLogin` redeems it at `/account/complete-login` with only `username` and `auth_code` (never a `source` field). Send our own `User-Agent`; do not impersonate the native apps. Only 429 is retried, and a bounded number of times; codes are single-use, so never retry after a network error or a 400.
 - Token files must stay private (`0600` where POSIX permissions apply). Config files are intentionally `0644`. Telemetry state uses `0600`.
 
 ## Testing Standards
