@@ -44,14 +44,14 @@
   },
   "dependencies": {
     "@automattic/node-tracks": "^0.6.1",
-    "@modelcontextprotocol/sdk": "^1.25.3",
-    "fast-xml-parser": "^5.3.4",
-    "zod": "^4.3.6"
+    "@modelcontextprotocol/sdk": "^1.32.0",
+    "fast-xml-parser": "^5.8.0",
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "shx": "^0.4.0",
-    "tsx": "^4.21.0",
+    "tsx": "^4.22.0",
     "typescript": "^5.7.0"
   }
 }
