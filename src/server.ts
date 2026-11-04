@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { readFileSync } from 'node:fs';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import type { Provider } from './providers/normalize.js';
@@ -8,10 +7,7 @@ import { parseServerArgs } from './server-args.js';
 import { createTelemetry, makeTrackedToolHandler } from './telemetry.js';
 import { registerReadTools } from './tools/read.js';
 import { registerWriteTools } from './tools/write.js';
-
-const pkg = JSON.parse(
-	readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
-) as { name: string; version: string };
+import { VERSION } from './version.js';
 
 const USAGE = `Usage: simplenote-mcp [options]
        simplenote-mcp <subcommand>
@@ -56,7 +52,7 @@ if (mode === 'help') {
 	process.exit(0);
 }
 if (mode === 'version') {
-	console.log(pkg.version);
+	console.log(VERSION);
 	process.exit(0);
 }
 
@@ -70,7 +66,7 @@ try {
 
 const telemetry = await createTelemetry();
 const trackTool = makeTrackedToolHandler(telemetry, () => provider.name);
-const server = new McpServer({ name: 'simplenote', version: pkg.version });
+const server = new McpServer({ name: 'simplenote', version: VERSION });
 
 function trackedTool<TArgs extends unknown[], TResult>(
 	name: string,
