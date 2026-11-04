@@ -26,6 +26,8 @@ jobs:
 
       - run: npm ci
 
+      - run: npm audit signatures
+
       - run: npm run typecheck
 
       - run: npm test

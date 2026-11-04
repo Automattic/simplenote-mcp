@@ -1,0 +1,39 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    # Like `npm update --before`: skip releases until they've been out a while.
+    # Applies to routine version updates only; security updates still open right away.
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+    # Update the lockfile when the existing range allows it; only touch
+    # package.json when a new version falls outside the range.
+    versioning-strategy: increase-if-necessary
+    groups:
+      production:
+        dependency-type: production
+        update-types: [minor, patch]
+      development:
+        dependency-type: development
+        update-types: [minor, patch]
+      security:
+        applies-to: security-updates
+        patterns: ["*"]
+    ignore:
+      # Types should match the oldest Node we support (engines: >=22).
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
