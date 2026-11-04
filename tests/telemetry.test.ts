@@ -1,6 +1,8 @@
-import { describe, it } from 'node:test';
+import { describe, it, mock } from 'node:test';
 import { strict as assert } from 'node:assert';
+import { EventEmitter } from 'node:events';
 import { readFile, stat, writeFile } from 'node:fs/promises';
+import https from 'node:https';
 import {
 	TELEMETRY_USER_TYPE,
 	_test,
@@ -145,7 +147,7 @@ describe('createTelemetry', () => {
 		const sent: { eventName: string; props: unknown }[] = [];
 		const client = _test.createTracksTelemetryClient(
 			{
-				async trackEvent(eventName, props) {
+				async trackEventAndForget(eventName, props) {
 					sent.push({ eventName, props });
 					await new Promise<void>((resolve) => {
 						resolveSend = resolve;
@@ -172,17 +174,49 @@ describe('createTelemetry', () => {
 		assert.equal(resolved, true);
 	});
 
-	it('stops waiting for node-tracks event promises after the timeout', async () => {
+	it('survives network errors from the real node-tracks client', async () => {
+		// Stand in for an offline machine: the request errors instead of connecting.
+		const requests: string[] = [];
+		mock.method(https, 'get', (url: string) => {
+			requests.push(url);
+			const req = new EventEmitter() as EventEmitter & { destroy(): void };
+			req.destroy = () => {};
+			setImmediate(() => {
+				req.emit(
+					'error',
+					Object.assign(new Error('getaddrinfo ENOTFOUND pixel.wp.com'), {
+						code: 'ENOTFOUND',
+					}),
+				);
+			});
+			return req;
+		});
+		try {
+			const client = _test.createNodeTracksClient(
+				'00000000-0000-4000-8000-000000000000',
+			);
+			await client.trackEvent('tool_call', { tool: 'list_notes' });
+			// Give an unhandled 'error' event a chance to surface.
+			await new Promise((resolve) => setImmediate(resolve));
+			assert.equal(requests.length, 1);
+		} finally {
+			mock.restoreAll();
+		}
+	});
+
+	it('passes the timeout to node-tracks trackEventAndForget', async () => {
+		const timeouts: (number | undefined)[] = [];
 		const client = _test.createTracksTelemetryClient(
 			{
-				async trackEvent() {
-					await new Promise<void>(() => {});
+				async trackEventAndForget(_eventName, _props, _logger, timeoutMs) {
+					timeouts.push(timeoutMs);
 				},
 			},
-			1,
+			250,
 		);
 
 		await client.trackEvent('setup');
+		assert.deepEqual(timeouts, [250]);
 	});
 
 	it('returns a no-op telemetry object when disabled by env var', async () => {

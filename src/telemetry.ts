@@ -57,10 +57,13 @@ type NodeTracksFactory = (
 ) => NodeTracks;
 
 type NodeTracks = {
-	trackEvent(
+	// Unlike trackEvent, this handles request errors (an unhandled one crashes
+	// the process, e.g. when offline) and closes the socket after the timeout.
+	trackEventAndForget(
 		eventName: string,
 		extraParams?: ParsedUrlQueryInput,
 		logger?: typeof NOOP_TRACKS_LOGGER,
+		timeoutMs?: number,
 	): Promise<void>;
 };
 
@@ -206,8 +209,11 @@ function createTracksTelemetryClient(
 	return {
 		async trackEvent(eventName, props = {}) {
 			try {
-				await withTimeout(
-					tracks.trackEvent(eventName, toTracksParams(props), NOOP_TRACKS_LOGGER),
+				// Resolves within timeoutMs on every path and closes the request.
+				await tracks.trackEventAndForget(
+					eventName,
+					toTracksParams(props),
+					NOOP_TRACKS_LOGGER,
 					timeoutMs,
 				);
 			} catch {
@@ -239,18 +245,6 @@ async function safeTrack(
 		await client.trackEvent(eventName, props);
 	} catch {
 		// Telemetry must never affect the MCP command or tool result.
-	}
-}
-
-async function withTimeout(promise: Promise<void>, timeoutMs: number): Promise<void> {
-	let timeout: ReturnType<typeof setTimeout> | undefined;
-	const timeoutPromise = new Promise<void>((resolve) => {
-		timeout = setTimeout(resolve, timeoutMs);
-	});
-	try {
-		await Promise.race([promise, timeoutPromise]);
-	} finally {
-		if (timeout) clearTimeout(timeout);
 	}
 }
 
@@ -327,6 +321,7 @@ const NOOP_TRACKS_LOGGER = {
 };
 
 export const _test = {
+	createNodeTracksClient,
 	createTracksTelemetryClient,
 	loadTelemetryState,
 	toTracksParams,
