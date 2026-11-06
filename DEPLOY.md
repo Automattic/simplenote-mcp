@@ -77,7 +77,7 @@ Releasing a fix for an older major version, such as 2.1.1 after 3.0.0, isn't sup
 
 The MCP Registry needs no change. It picks its latest version by semver, not by publish date.
 
-A published npm version can't be replaced. If the wrong content goes out, ship a follow-up version.
+A published npm version can't be replaced. If the wrong content goes out, ship a follow-up version. GitHub releases are immutable too (see below): a release's notes can be edited, but deleting it doesn't free its tag name for reuse.
 
 ### 3. Verify
 
@@ -105,6 +105,7 @@ These are already in place. They are recorded here in case they need to be recre
 
   Renaming the workflow file or the environment breaks publishing until this is updated. Trusted publishing needs npm 11.5.1 or newer; the workflow uses the Node version in `.nvmrc`, and its bundled npm is new enough.
 - **npm publishing access.** Set to "Require two-factor authentication and disallow tokens", so only the trusted publisher can publish.
+- **Immutable releases.** Enabled under **Settings → General → Releases**. Once a release is published, its tag can't be moved or deleted, and GitHub adds a signed attestation for it. Releases from before this was enabled (v2.0.1) are not immutable.
 - **MCP Registry.** Needs no setup. `mcp-publisher login github-oidc` gets permission for the `io.github.Automattic/*` namespace because the workflow runs in an `Automattic` repository.
 - **`mcp-publisher` version.** The workflow pins a version and its SHA-256 checksum (`MCP_PUBLISHER_VERSION` / `MCP_PUBLISHER_SHA256`). To upgrade, take both values from the [registry's releases](https://github.com/modelcontextprotocol/registry/releases): the checksum is the `mcp-publisher_linux_amd64.tar.gz` line in `registry_<version>_checksums.txt`.
 
