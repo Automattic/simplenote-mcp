@@ -1,12 +1,13 @@
 // Release gate run by .github/workflows/release.yml (and locally by the
 // release-pr skill). Confirms every version field in the repo agrees, and that
-// the version is the next patch/minor/major after npm's `latest` unless the
-// increment check is explicitly skipped. A version that is already on npm is
-// accepted so a partially failed release can be re-run to completion.
+// the version is the next patch/minor/major after the highest version ever
+// published (including unpublished ones, which npm never lets you reuse). A
+// version that is already on npm is accepted so a partially failed release can
+// be re-run to completion.
 //
 // Usage: node --import tsx scripts/check-release-version.ts
-// Env: SKIP_INCREMENT_CHECK=true, NPM_REGISTRY (default registry.npmjs.org),
-//      GITHUB_SHA, GITHUB_OUTPUT (both set by GitHub Actions).
+// Env: NPM_REGISTRY (default registry.npmjs.org), and GITHUB_SHA /
+//      GITHUB_OUTPUT (both set by GitHub Actions).
 
 import { appendFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -23,6 +24,8 @@ export interface ReleaseFiles {
 export interface RegistryState {
 	latest?: string;
 	versions: Record<string, { gitHead?: string }>;
+	// Every version ever published, including unpublished ones (from `time`).
+	taken: string[];
 }
 
 export interface ReleasePlan {
@@ -49,22 +52,36 @@ export function parseVersion(version: string): [number, number, number] | null {
 	return [Number(match[1]), Number(match[2]), Number(match[3])];
 }
 
-export function nextVersions(latest: string): string[] {
-	const parsed = parseVersion(latest);
+export function nextVersions(current: string): string[] {
+	const parsed = parseVersion(current);
 	if (!parsed) {
-		throw new ReleaseCheckError([`npm latest "${latest}" is not a plain x.y.z version`]);
+		throw new ReleaseCheckError([`"${current}" is not a plain x.y.z version`]);
 	}
 	const [major, minor, patch] = parsed;
 	return [`${major}.${minor}.${patch + 1}`, `${major}.${minor + 1}.0`, `${major + 1}.0.0`];
 }
 
-function isGreater(a: [number, number, number], b: [number, number, number]): boolean {
+function compareVersions(a: [number, number, number], b: [number, number, number]): number {
 	for (let i = 0; i < 3; i++) {
 		if (a[i] !== b[i]) {
-			return a[i]! > b[i]!;
+			return a[i]! - b[i]!;
 		}
 	}
-	return false;
+	return 0;
+}
+
+// Highest plain x.y.z version in the list; prereleases are ignored.
+export function highestVersion(versions: string[]): string | undefined {
+	let best: [number, number, number] | undefined;
+	let bestVersion: string | undefined;
+	for (const version of versions) {
+		const parsed = parseVersion(version);
+		if (parsed && (!best || compareVersions(parsed, best) > 0)) {
+			best = parsed;
+			bestVersion = version;
+		}
+	}
+	return bestVersion;
 }
 
 function get(obj: unknown, path: (string | number)[]): unknown {
@@ -91,7 +108,6 @@ export function collectVersions(files: ReleaseFiles): Record<string, unknown> {
 export function planRelease(options: {
 	files: ReleaseFiles;
 	registry: RegistryState;
-	skipIncrementCheck: boolean;
 	sha: string;
 }): ReleasePlan {
 	const fields = collectVersions(options.files);
@@ -113,24 +129,19 @@ export function planRelease(options: {
 		return { version, alreadyPublished: true, target: published.gitHead || options.sha };
 	}
 
-	const { latest } = options.registry;
-	if (latest) {
-		if (!options.skipIncrementCheck) {
-			const allowed = nextVersions(latest);
-			if (!allowed.includes(version)) {
-				throw new ReleaseCheckError([
-					`Version ${version} is not the next release after npm latest ${latest}.`,
-					`Expected one of: ${allowed.join(', ')}.`,
-					'Re-run with skip_increment_check if this jump is intentional.',
-				]);
-			}
-		} else {
-			const latestParsed = parseVersion(latest);
-			if (latestParsed && !isGreater(parsed, latestParsed)) {
-				throw new ReleaseCheckError([
-					`Version ${version} is not greater than npm latest ${latest}; publishing it would move the latest tag backwards.`,
-				]);
-			}
+	if (options.registry.taken.includes(version)) {
+		throw new ReleaseCheckError([`Version ${version} was published and then unpublished; npm does not allow reusing it.`]);
+	}
+
+	const highest = highestVersion(options.registry.taken);
+	if (highest) {
+		const allowed = nextVersions(highest);
+		if (!allowed.includes(version)) {
+			throw new ReleaseCheckError([
+				`Version ${version} is not the next release after ${highest}, the highest version published to npm.`,
+				`Expected one of: ${allowed.join(', ')}.`,
+				'Releasing fixes for an older major version is not supported yet; see DEPLOY.md.',
+			]);
 		}
 	}
 
@@ -144,7 +155,7 @@ export async function fetchRegistryState(
 	const url = `${registry.replace(/\/$/, '')}/${name.replace('/', '%2f')}`;
 	const response = await fetch(url, { headers: { accept: 'application/json' } });
 	if (response.status === 404) {
-		return { versions: {} };
+		return { versions: {}, taken: [] };
 	}
 	if (!response.ok) {
 		throw new Error(`GET ${url} failed: ${response.status} ${response.statusText}`);
@@ -152,8 +163,14 @@ export async function fetchRegistryState(
 	const body = (await response.json()) as {
 		'dist-tags'?: { latest?: string };
 		versions?: Record<string, { gitHead?: string }>;
+		time?: Record<string, string>;
 	};
-	return { latest: body['dist-tags']?.latest, versions: body.versions ?? {} };
+	const versions = body.versions ?? {};
+	const taken = new Set([
+		...Object.keys(versions),
+		...Object.keys(body.time ?? {}).filter((key) => key !== 'created' && key !== 'modified'),
+	]);
+	return { latest: body['dist-tags']?.latest, versions, taken: [...taken] };
 }
 
 export async function readReleaseFiles(dir: string): Promise<ReleaseFiles> {
@@ -176,7 +193,6 @@ export async function main(env: NodeJS.ProcessEnv = process.env, dir = process.c
 	const plan = planRelease({
 		files,
 		registry,
-		skipIncrementCheck: env.SKIP_INCREMENT_CHECK === 'true',
 		sha: env.GITHUB_SHA ?? 'HEAD',
 	});
 

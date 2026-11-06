@@ -37,7 +37,7 @@ Recommend patch, minor, or major from the changes, following semver for the pack
 - **minor**: new tools, new options, or other backward-compatible features.
 - **patch**: fixes, dependency updates, docs, and internal changes.
 
-Show the user the list of changes and your recommendation, and confirm the version before editing anything. The Release workflow only accepts the exact next patch, minor, or major after npm's latest; anything else needs its `skip_increment_check` input, so call that out if the user wants a different number.
+Show the user the list of changes and your recommendation, and confirm the version before editing anything. The Release workflow only accepts the exact next patch, minor, or major after the highest version ever published to npm, so other numbers aren't possible. Releasing a fix for an older major version isn't supported yet; if the user asks for one, point them to `DEPLOY.md`.
 
 ## 4. Bump the version
 

@@ -99,7 +99,7 @@ npm run build
 - `DEPLOY.md` is the authoritative npm + MCP Registry release runbook; follow it for release work.
 - Releases publish only from `.github/workflows/release.yml` (npm trusted publishing and MCP Registry OIDC). Never run `npm publish`, `npm login`, or `mcp-publisher` locally, and do not add publish tokens.
 - To prepare a release, follow `.claude/skills/release-pr/SKILL.md`: it opens the version-bump PR, and the Release workflow is run after it merges.
-- A version bump touches five fields in the same commit: `version` in `package.json`, the top-level `version` and `packages[""].version` in `package-lock.json` (`npm version <v> --no-git-tag-version` updates these three), and both the top-level `version` and `packages[0].version` in `server.json`. `scripts/check-release-version.ts` enforces this and the next-patch/minor/major rule.
+- A version bump touches five fields in the same commit: `version` in `package.json`, the top-level `version` and `packages[""].version` in `package-lock.json` (`npm version <v> --no-git-tag-version` updates these three), and both the top-level `version` and `packages[0].version` in `server.json`. `scripts/check-release-version.ts` enforces this and the next-patch/minor/major rule (counted from the highest version ever published).
 - The workflow filename (`release.yml`) and its `npm-publish` environment are part of the npm trusted-publisher configuration; renaming either breaks publishing.
 
 ## Common Pitfalls

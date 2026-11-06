@@ -4,6 +4,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import {
 	fetchRegistryState,
 	main,
+	highestVersion,
 	nextVersions,
 	planRelease,
 	ReleaseCheckError,
@@ -26,13 +27,13 @@ function filesAt(version: string, overrides: Partial<Record<'lockRoot' | 'server
 const REGISTRY: RegistryState = {
 	latest: '2.0.1',
 	versions: { '2.0.0': { gitHead: 'aaa' }, '2.0.1': { gitHead: 'bbb' } },
+	taken: ['2.0.0', '2.0.1'],
 };
 
-function plan(version: string, options: { skip?: boolean; registry?: RegistryState; files?: ReleaseFiles } = {}) {
+function plan(version: string, options: { registry?: RegistryState; files?: ReleaseFiles } = {}) {
 	return planRelease({
 		files: options.files ?? filesAt(version),
 		registry: options.registry ?? REGISTRY,
-		skipIncrementCheck: options.skip ?? false,
 		sha: 'cafe',
 	});
 }
@@ -40,6 +41,12 @@ function plan(version: string, options: { skip?: boolean; registry?: RegistrySta
 describe('nextVersions', () => {
 	it('returns the next patch, minor, and major', () => {
 		assert.deepEqual(nextVersions('2.0.1'), ['2.0.2', '2.1.0', '3.0.0']);
+	});
+});
+
+describe('highestVersion', () => {
+	it('compares numerically and ignores prereleases', () => {
+		assert.equal(highestVersion(['2.0.9', '2.0.10', '3.0.0-beta.1', '1.9.9']), '2.0.10');
 	});
 });
 
@@ -76,36 +83,55 @@ describe('planRelease', () => {
 		assert.deepEqual(plan('2.0.1'), { version: '2.0.1', alreadyPublished: true, target: 'bbb' });
 	});
 
-	it('allows larger jumps when the increment check is skipped', () => {
-		assert.equal(plan('2.5.0', { skip: true }).version, '2.5.0');
+	it('rejects older-major fixes, which are not supported yet', () => {
+		const registry: RegistryState = {
+			latest: '3.0.0',
+			versions: { '2.1.0': {}, '3.0.0': {} },
+			taken: ['2.1.0', '3.0.0'],
+		};
+		assert.throws(() => plan('2.1.1', { registry }), /older major version is not supported/);
 	});
 
-	it('still refuses to go backwards when the increment check is skipped', () => {
-		assert.throws(() => plan('1.9.9', { skip: true }), /not greater than npm latest/);
+	it('rejects reusing an unpublished version', () => {
+		const registry: RegistryState = { ...REGISTRY, taken: [...REGISTRY.taken, '2.0.2'] };
+		assert.throws(() => plan('2.0.2', { registry }), /unpublished; npm does not allow reusing it/);
+	});
+
+	it('counts unpublished versions when finding the next release', () => {
+		const registry: RegistryState = { ...REGISTRY, taken: [...REGISTRY.taken, '2.0.2'] };
+		assert.equal(plan('2.0.3', { registry }).version, '2.0.3');
 	});
 
 	it('accepts any version for a package that has never been published', () => {
-		assert.equal(plan('5.0.0', { registry: { versions: {} } }).alreadyPublished, false);
+		assert.equal(plan('5.0.0', { registry: { versions: {}, taken: [] } }).alreadyPublished, false);
 	});
 });
 
 describe('fetchRegistryState', () => {
 	afterEach(() => mock.restoreAll());
 
-	it('reads latest and versions from the packument, escaping the scope slash', async () => {
+	it('reads latest, versions, and unpublished versions from the packument, escaping the scope slash', async () => {
 		let requested = '';
 		mockFetch((url) => {
 			requested = url;
-			return Response.json({ 'dist-tags': { latest: '2.0.1' }, versions: { '2.0.1': { gitHead: 'bbb' } } });
+			return Response.json({
+				'dist-tags': { latest: '2.0.1' },
+				versions: { '2.0.1': { gitHead: 'bbb' } },
+				time: { created: 't', modified: 't', '2.0.0': 't', '2.0.1': 't' },
+			});
 		});
 		const state = await fetchRegistryState('@automattic/simplenote-mcp', 'https://registry.example/');
 		assert.equal(requested, 'https://registry.example/@automattic%2fsimplenote-mcp');
-		assert.deepEqual(state, { latest: '2.0.1', versions: { '2.0.1': { gitHead: 'bbb' } } });
+		assert.deepEqual(state, {
+			latest: '2.0.1',
+			versions: { '2.0.1': { gitHead: 'bbb' } },
+			taken: ['2.0.1', '2.0.0'],
+		});
 	});
 
 	it('treats 404 as never published', async () => {
 		mockFetch(() => new Response('not found', { status: 404 }));
-		assert.deepEqual(await fetchRegistryState('@automattic/simplenote-mcp'), { versions: {} });
+		assert.deepEqual(await fetchRegistryState('@automattic/simplenote-mcp'), { versions: {}, taken: [] });
 	});
 
 	it('surfaces other registry failures', async () => {

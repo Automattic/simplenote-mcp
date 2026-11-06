@@ -22,7 +22,7 @@ To do it by hand, follow the skill's steps. In short:
    - `server.json`: top-level `version` and `packages[0].version`
 
    `npm version <version> --no-git-tag-version` handles the first three.
-2. The version must be the next patch, minor, or major after npm's `latest`. For example, after 2.0.1 it must be 2.0.2, 2.1.0, or 3.0.0.
+2. The version must be the next patch, minor, or major after the highest version ever published to npm. For example, after 2.0.1 it must be 2.0.2, 2.1.0, or 3.0.0. Versions that were unpublished still count, because npm never lets a version number be reused.
 3. Check the PR:
 
    ```bash
@@ -51,7 +51,7 @@ The workflow only runs from `main`. Both a step in the workflow and the `npm-pub
 1. Runs `npm ci`, `npm audit signatures`, typecheck, and tests.
 2. Runs `scripts/check-release-version.ts`, which fails unless:
    - all five version fields match, and
-   - the version is the next patch, minor, or major after npm's `latest`.
+   - the version is the next patch, minor, or major after the highest version published to npm.
 3. Runs `npm publish`.
 4. Creates the GitHub release `v<version>` on the merged commit. Its notes are GitHub's auto-generated notes, with a link to the release PR at the top. The release creates a lightweight tag that points at the merge commit GitHub signed, so it shows as Verified.
 5. Waits for the version to appear on npm, then runs `mcp-publisher publish`. The registry checks the published package's `mcpName`, so this has to come after npm.
@@ -66,9 +66,16 @@ Every step skips itself if its work is already done:
 
 If a run fails partway, fix the cause and run the workflow again. When a re-run finds the version already on npm, the GitHub release targets the commit npm recorded for it, not the current `main`.
 
-### Unusual version numbers
+### Fixes for an older major version
 
-To release a version that isn't the next patch, minor, or major, tick **skip_increment_check** when starting the workflow. For example, you might skip a number. The version must still be greater than npm's `latest`, because publishing a lower version would move the `latest` tag backwards. Releasing fixes on an older major line, which needs an npm dist-tag, isn't supported yet.
+Releasing a fix for an older major version, such as 2.1.1 after 3.0.0, isn't supported yet. The version check rejects it. Supporting it would take:
+
+- **A maintenance branch** such as `release/2.x`, with branch protection like `main`'s, allowed by the "Require main" step and the `npm-publish` environment's branch rule.
+- **A separate npm dist-tag**, such as `npm publish --tag latest-2`, so `latest` stays on the newest major.
+- **`gh release create --latest=false`**, so the GitHub release doesn't take the "Latest" badge.
+- **A version rule for that branch:** the next patch, minor, or major after the highest published version below the new one. For 2.1.1, that's 2.1.0.
+
+The MCP Registry needs no change. It picks its latest version by semver, not by publish date.
 
 A published npm version can't be replaced. If the wrong content goes out, ship a follow-up version.
 
@@ -109,7 +116,7 @@ npm didn't accept the workflow as a trusted publisher. Check that the trusted pu
 
 ### Version check fails
 
-The log lists the mismatched fields, or the versions that would be accepted. Fix the version in a new PR, or use `skip_increment_check` if the jump is intentional.
+The log lists either the mismatched fields or the versions that would be accepted. Fix the version in a new PR.
 
 ### `403 Forbidden` from `mcp-publisher publish`
 
