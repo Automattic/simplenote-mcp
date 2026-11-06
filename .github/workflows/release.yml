@@ -1,0 +1,119 @@
+name: Release
+
+# Publishes the version already committed on main (bumped in a reviewed
+# release PR) to npm, creates the GitHub release and tag, and publishes the
+# matching server.json to the MCP Registry. Every step skips itself when its
+# work is already done, so a failed run can simply be re-run. See DEPLOY.md.
+#
+# npm trusted publishing is configured for this exact filename and the
+# `npm-publish` environment; renaming either breaks publishing.
+
+on:
+  workflow_dispatch:
+    inputs:
+      skip_increment_check:
+        type: boolean
+        default: false
+        description: 'Allow a version that is not the next patch/minor/major after npm latest'
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment: npm-publish
+    permissions:
+      contents: write # Create the GitHub release and its tag
+      id-token: write # npm trusted publishing and MCP Registry login (OIDC)
+      pull-requests: read # Find the release PR for the release notes
+    env:
+      MCP_PUBLISHER_VERSION: '1.8.4'
+      MCP_PUBLISHER_SHA256: '5dc2fd415369c73551259f31cd33e2aacc9e0d1021e7f08fef1492d93b781628'
+    steps:
+      - name: Require main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Releases run from main only (got ${GITHUB_REF})."
+          exit 1
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # No dependency cache: a release build should not restore state written
+      # by other workflow runs.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: '.nvmrc'
+          registry-url: 'https://registry.npmjs.org'
+
+      - run: npm ci
+
+      - run: npm audit signatures
+
+      - run: npm run typecheck
+
+      - run: npm test
+
+      - name: Check release version
+        id: check
+        run: node --import tsx scripts/check-release-version.ts
+        env:
+          SKIP_INCREMENT_CHECK: ${{ inputs.skip_increment_check }}
+
+      - name: Publish to npm
+        if: steps.check.outputs.published != 'true'
+        run: npm publish
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.check.outputs.version }}
+          TARGET: ${{ steps.check.outputs.target }}
+        run: |
+          tag="v${VERSION}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists; skipping."
+            exit 0
+          fi
+          args=(--target "$TARGET" --title "$tag" --generate-notes)
+          pr=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${TARGET}/pulls" --jq '.[0].number // empty')
+          if [ -n "$pr" ]; then
+            args+=(--notes "Release PR: #${pr}")
+          fi
+          gh release create "$tag" "${args[@]}"
+
+      - name: Wait for the version to be visible on npm
+        env:
+          VERSION: ${{ steps.check.outputs.version }}
+        run: |
+          for _ in $(seq 30); do
+            if curl -fsS -o /dev/null "https://registry.npmjs.org/@automattic%2fsimplenote-mcp/${VERSION}"; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::@automattic/simplenote-mcp@${VERSION} did not appear on npm within 5 minutes."
+          exit 1
+
+      - name: Publish to the MCP Registry
+        env:
+          VERSION: ${{ steps.check.outputs.version }}
+        run: |
+          name=$(jq -r .name server.json)
+          if curl -fsS -o /dev/null "https://registry.modelcontextprotocol.io/v0.1/servers/${name/\//%2F}/versions/${VERSION}"; then
+            echo "${name} ${VERSION} is already in the MCP Registry; skipping."
+            exit 0
+          fi
+          cd "$RUNNER_TEMP"
+          curl -fsSL -o mcp-publisher.tar.gz \
+            "https://github.com/modelcontextprotocol/registry/releases/download/v${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz"
+          echo "${MCP_PUBLISHER_SHA256}  mcp-publisher.tar.gz" | sha256sum -c -
+          tar xzf mcp-publisher.tar.gz mcp-publisher
+          cd "$GITHUB_WORKSPACE"
+          "$RUNNER_TEMP/mcp-publisher" login github-oidc
+          "$RUNNER_TEMP/mcp-publisher" publish

@@ -1,3 +1,5 @@
 node_modules/
 dist/
-.claude/
+# Local Claude Code state; shared project skills are committed.
+.claude/*
+!.claude/skills/
