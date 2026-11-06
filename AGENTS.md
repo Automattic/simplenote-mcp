@@ -30,7 +30,7 @@ This repository is a Node.js 22+ TypeScript MCP server for Simplenote. It expose
 
 ## Commands
 
-Use Node.js 22 or newer (see .nvmrc)
+Use Node.js 26 for development (see `.nvmrc`). The package supports Node.js 22 or newer (`engines`), and CI tests both 22 and 26.
 
 ```bash
 npm ci
