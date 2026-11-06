@@ -4,7 +4,7 @@ Thanks for helping improve Simplenote MCP. This project is a Node.js MCP server 
 
 ## Development Setup
 
-Use Node.js 22 or newer.
+Use Node.js 26 for development (see `.nvmrc`; `nvm use` picks it up). The published package supports Node.js 22 or newer, and CI tests both.
 
 ```bash
 npm ci
