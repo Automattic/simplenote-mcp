@@ -110,7 +110,7 @@ describe('planRelease', () => {
 describe('fetchRegistryState', () => {
 	afterEach(() => mock.restoreAll());
 
-	it('reads latest, versions, and unpublished versions from the packument, escaping the scope slash', async () => {
+	it('reads latest, versions, and unpublished versions from the packument, encoding the name', async () => {
 		let requested = '';
 		mockFetch((url) => {
 			requested = url;
@@ -121,12 +121,22 @@ describe('fetchRegistryState', () => {
 			});
 		});
 		const state = await fetchRegistryState('@automattic/simplenote-mcp', 'https://registry.example/');
-		assert.equal(requested, 'https://registry.example/@automattic%2fsimplenote-mcp');
+		assert.equal(requested, 'https://registry.example/%40automattic%2Fsimplenote-mcp');
 		assert.deepEqual(state, {
 			latest: '2.0.1',
 			versions: { '2.0.1': { gitHead: 'bbb' } },
 			taken: ['2.0.1', '2.0.0'],
 		});
+	});
+
+	it('encodes every URL-significant character in the name, not just the first slash', async () => {
+		let requested = '';
+		mockFetch((url) => {
+			requested = url;
+			return Response.json({});
+		});
+		await fetchRegistryState('a/b/c?d#e', 'https://registry.example');
+		assert.equal(requested, 'https://registry.example/a%2Fb%2Fc%3Fd%23e');
 	});
 
 	it('treats 404 as never published', async () => {

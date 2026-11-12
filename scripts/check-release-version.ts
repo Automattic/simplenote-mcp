@@ -152,7 +152,7 @@ export async function fetchRegistryState(
 	name: string,
 	registry = 'https://registry.npmjs.org',
 ): Promise<RegistryState> {
-	const url = `${registry.replace(/\/$/, '')}/${name.replace('/', '%2f')}`;
+	const url = `${registry.replace(/\/$/, '')}/${encodeURIComponent(name)}`;
 	const response = await fetch(url, { headers: { accept: 'application/json' } });
 	if (response.status === 404) {
 		return { versions: {}, taken: [] };
